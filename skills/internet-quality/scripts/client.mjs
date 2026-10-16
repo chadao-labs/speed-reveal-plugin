@@ -251,7 +251,7 @@ var PROFILES = Object.freeze({
   standard: Object.freeze({ baseline_ms: 3e3, load_ms: 8e3, max_download_bytes: 128 * MiB, max_upload_bytes: 32 * MiB })
 });
 var SCHEDULE = Object.freeze({ probe_interval_ms: 250, request_timeout_ms: 3e3, overall_ms: 3e4 });
-var ENDPOINTS = Object.freeze({ download: "https://speed.cloudflare.com/__down", upload: "https://speed.cloudflare.com/__up" });
+var TEST_ENDPOINTS = Object.freeze({ download: "https://speed.cloudflare.com/__down", upload: "https://speed.cloudflare.com/__up" });
 var now = () => performance.now();
 function summarizePhase({ samples }) {
   const values = samples.filter((sample) => sample.status === "ok").map((sample) => sample.elapsed_ms).sort((a, b) => a - b);
@@ -278,8 +278,8 @@ function summarizePhase({ samples }) {
 }
 function summarizeMeasurement({ phases }) {
   const [idle, download, upload] = phases;
-  const throughput = ({ transfer }) => transfer && transfer.bytes > 0 && transfer.elapsed_ms > 0 ? transfer.bytes * 8 / transfer.elapsed_ms / 1e3 : null;
-  return { download_mbps: throughput(download), upload_mbps: throughput(upload), idle: summarizePhase(idle), download: summarizePhase(download), upload: summarizePhase(upload) };
+  const throughput2 = ({ transfer }) => transfer && transfer.bytes > 0 && transfer.elapsed_ms > 0 ? transfer.bytes * 8 / transfer.elapsed_ms / 1e3 : null;
+  return { download_mbps: throughput2(download), upload_mbps: throughput2(upload), idle: summarizePhase(idle), download: summarizePhase(download), upload: summarizePhase(upload) };
 }
 function measurementQuality(measurement) {
   const transfers = measurement.phases.filter((phase) => phase.transfer).map((phase) => phase.transfer);
@@ -294,7 +294,7 @@ function abortError(message) {
   error.name = "AbortError";
   return error;
 }
-function scope(parent, milliseconds, reason) {
+function scope(parent, milliseconds2, reason) {
   const controller = new AbortController();
   const children = /* @__PURE__ */ new Set();
   const parentSignal = parent?.signal || parent;
@@ -305,7 +305,7 @@ function scope(parent, milliseconds, reason) {
   if (parentSignal?.aborted) abort();
   else if (parent?.children) parent.children.add(controller);
   else parentSignal?.addEventListener("abort", abort, { once: true });
-  const timer = setTimeout(() => controller.abort(reason), Math.max(0, milliseconds));
+  const timer = setTimeout(() => controller.abort(reason), Math.max(0, milliseconds2));
   return {
     signal: controller.signal,
     children,
@@ -319,7 +319,7 @@ function scope(parent, milliseconds, reason) {
     }
   };
 }
-function pause(milliseconds, signal) {
+function pause(milliseconds2, signal) {
   if (signal.aborted) return Promise.resolve();
   return new Promise((resolve2) => {
     const done = () => {
@@ -327,12 +327,12 @@ function pause(milliseconds, signal) {
       signal.removeEventListener("abort", done);
       resolve2();
     };
-    const timer = setTimeout(done, Math.max(0, milliseconds));
+    const timer = setTimeout(done, Math.max(0, milliseconds2));
     signal.addEventListener("abort", done, { once: true });
   });
 }
 function endpointsFor(override) {
-  if (!override) return ENDPOINTS;
+  if (!override) return TEST_ENDPOINTS;
   const result = {};
   for (const name of ["download", "upload"]) {
     const url = new URL(override[name]);
@@ -367,6 +367,27 @@ async function request(url, init, parent, timeout, consume) {
     operation.close();
   }
 }
+async function drainSmallReply(response, run) {
+  if (!response.body) return;
+  const reader = response.body.getReader();
+  let bytes = 0;
+  try {
+    while (true) {
+      const { done, value } = await reader.read();
+      if (done) return;
+      bytes += value.byteLength;
+      if (bytes > 64 * 1024) {
+        const error = new Error("Probe or upload response exceeded its 64 KiB limit.");
+        run.stop(error);
+        throw error;
+      }
+    }
+  } finally {
+    await reader.cancel().catch(() => {
+    });
+    reader.releaseLock();
+  }
+}
 async function runPhase(name, config, schedule, endpoints, payload, run, progress) {
   const started = now();
   const duration = name === "idle" ? config.baseline_ms : config.load_ms;
@@ -386,9 +407,7 @@ async function runPhase(name, config, schedule, endpoints, payload, run, progres
   };
   const probe = async (sequence) => {
     const began = now();
-    const status = await request(downloadURL(endpoints.download, 0, sequence), {}, run, schedule.request_timeout_ms, async (response) => {
-      await response.arrayBuffer();
-    });
+    const status = await request(downloadURL(endpoints.download, 0, sequence), {}, run, schedule.request_timeout_ms, (response) => drainSmallReply(response, run));
     if (status === "interrupted") return;
     samples.push(status === "ok" ? { sequence, status, elapsed_ms: now() - began } : { sequence, status });
   };
@@ -417,7 +436,7 @@ async function runPhase(name, config, schedule, endpoints, payload, run, progres
         schedule.request_timeout_ms,
         async (response) => {
           if (name === "upload") {
-            await response.arrayBuffer();
+            await drainSmallReply(response, run);
           } else {
             const reader = response.body.getReader();
             try {
@@ -470,16 +489,16 @@ async function runPhase(name, config, schedule, endpoints, payload, run, progres
 function runTest(options = {}) {
   return runTestWithTiming(options);
 }
-async function runTestWithTiming({ profile = "quick", runtime, execution, networkType = "unknown", signal, onProgress, endpoints } = {}, timing = {}) {
+async function runTestWithTiming({ profile = "quick", runtime, execution, networkType = "unknown", signal, onProgress, endpoints } = {}, timing2 = {}) {
   if (!Object.hasOwn(PROFILES, profile)) throw new TypeError("Unknown test profile.");
   if (!["browser", "node"].includes(runtime)) throw new TypeError("Unknown runtime.");
   if (!["this-device", "agent-host"].includes(execution)) throw new TypeError("Unknown execution host.");
   if (!["wifi", "cellular", "wired", "unknown"].includes(networkType)) throw new TypeError("Unknown network type.");
   if (runtime === "browser" && execution !== "this-device") throw new TypeError("Browser tests run on this device.");
   const targets = endpointsFor(endpoints);
-  if (Object.keys(timing).length && !endpoints) throw new TypeError("Timing overrides require local fixture endpoints.");
-  const config = { ...PROFILES[profile], ...timing };
-  const schedule = { ...SCHEDULE, ...timing };
+  if (Object.keys(timing2).length && !endpoints) throw new TypeError("Timing overrides require local fixture endpoints.");
+  const config = { ...PROFILES[profile], ...timing2 };
+  const schedule = { ...SCHEDULE, ...timing2 };
   if (signal?.aborted) throw signal.reason || abortError("Test canceled.");
   const payload = new Uint8Array(Math.min(4 * MiB, config.max_upload_bytes));
   for (let i = 0; i < payload.length; i += 65536) crypto.getRandomValues(payload.subarray(i, Math.min(payload.length, i + 65536)));
@@ -501,7 +520,7 @@ async function runTestWithTiming({ profile = "quick", runtime, execution, networ
 var plugin_default = {
   $schema: "https://agent-plugins.org/schemas/1.0.0/plugin.schema.json",
   name: "internet-quality-map",
-  version: "0.2.0",
+  version: "0.3.1",
   description: "Measure Internet responsiveness for agentic workflows and read community connection reports.",
   homepage: "https://internet-quality-map.nf-93f.workers.dev/",
   keywords: ["internet", "latency", "agent", "connectivity"],
@@ -522,6 +541,173 @@ var plugin_default = {
     }
   }
 };
+
+// public/responsiveness.js
+var phaseNames = ["idle", "download", "upload"];
+var finite = (value) => Number.isFinite(value) && value >= 0 ? value : null;
+function responsiveness({ metrics, quality }) {
+  const phases = Object.fromEntries(phaseNames.map((name) => {
+    const phase = metrics?.[name] || {};
+    const received = finite(phase.received);
+    return [name, {
+      p95_ms: received > 0 ? finite(phase.p95_ms) : null,
+      median_ms: received > 0 ? finite(phase.median_ms) : null,
+      jitter_ms: received > 1 ? finite(phase.jitter_ms) : null,
+      sent: finite(phase.sent),
+      received,
+      failed: finite(phase.failed)
+    }];
+  }));
+  const hasFailures = phaseNames.some((name) => phases[name].failed > 0) || quality?.failed_requests > 0;
+  const limited = quality?.byte_capped || quality?.short_load || hasFailures;
+  const knownQuality = quality?.byte_capped === false && quality?.short_load === false && quality?.failed_requests === 0;
+  const sampled = phaseNames.every((name) => phases[name].sent > 0 && phases[name].received > 0);
+  const coverage = limited ? "limited" : knownQuality && sampled ? "complete" : "unknown";
+  const { download, upload } = phases;
+  return {
+    ...phases,
+    coverage,
+    higher_loaded_p95_ms: download.p95_ms !== null && upload.p95_ms !== null ? Math.max(download.p95_ms, upload.p95_ms) : null
+  };
+}
+var latency = (label, phase, field, bands = [30, 80, 150]) => ({ label, unit: "ms", higherIsBetter: false, bands, value: (_result, view) => view[phase][field] });
+var throughput = (label, field) => ({ label, unit: "Mbps", higherIsBetter: true, bands: [10, 50, 100], value: (result) => finite(result.metrics?.[field]) });
+var metricDefinitions = Object.freeze({
+  higher_loaded_p95_ms: { label: "Higher loaded HTTP p95, download/upload", unit: "ms", higherIsBetter: false, bands: [30, 80, 150], value: (_result, view) => view.higher_loaded_p95_ms },
+  download_p95_ms: latency("Download-loaded HTTP p95", "download", "p95_ms"),
+  upload_p95_ms: latency("Upload-loaded HTTP p95", "upload", "p95_ms"),
+  idle_p95_ms: latency("Baseline HTTP p95", "idle", "p95_ms"),
+  idle_median_ms: latency("Baseline HTTP median", "idle", "median_ms"),
+  download_median_ms: latency("Download-loaded HTTP median", "download", "median_ms"),
+  upload_median_ms: latency("Upload-loaded HTTP median", "upload", "median_ms"),
+  idle_jitter_ms: latency("Baseline HTTP jitter", "idle", "jitter_ms", [5, 20, 50]),
+  download_jitter_ms: latency("Download-loaded HTTP jitter", "download", "jitter_ms", [5, 20, 50]),
+  upload_jitter_ms: latency("Upload-loaded HTTP jitter", "upload", "jitter_ms", [5, 20, 50]),
+  download_mbps: throughput("Download HTTP throughput", "download_mbps"),
+  upload_mbps: throughput("Upload HTTP throughput", "upload_mbps")
+});
+
+// public/interpretation.js
+var VERSION = "iqm-interpretation-v1";
+var ABSOLUTE_CUE_MS = 250;
+var INCREASE_CUE_MS = 100;
+var phaseNames2 = ["idle", "download", "upload"];
+var sampleFloors = { idle: 4, download: 8, upload: 8 };
+var phaseLabels = { idle: "Baseline", download: "Download", upload: "Upload" };
+var count = (value) => Number.isSafeInteger(value) && value >= 0 ? value : null;
+var timing = (value) => Number.isFinite(value) && value >= 0 ? value : null;
+var milliseconds = (value) => Math.round(value * 10) / 10;
+var reasonText = {
+  "byte-cap": "A transfer reached its data budget. A capped transfer does not establish sustained speed or responsiveness.",
+  "short-load": "A load phase ended before its planned duration.",
+  "request-failures": "Some HTTP requests failed. Successful timing summaries exclude failures. HTTP request failures are not packet loss.",
+  "sparse-samples": "There were fewer than four successful baseline probes or eight in a loaded phase. These are editorial completeness checks, not confidence intervals.",
+  "missing-quality": "Quality information is missing or invalid, so unreported transfer limits remain unknown.",
+  "missing-counts": "Some probe counts are missing, invalid, or inconsistent. They cannot establish complete sampling.",
+  "missing-timing": "At least one phase has no usable successful p95 timing. Comparisons involving that phase are unavailable."
+};
+function normalizePhase(phase = {}) {
+  const sent = count(phase?.sent);
+  const received = count(phase?.received);
+  const failed = count(phase?.failed);
+  const inconsistent = sent !== null && (received !== null && received > sent || failed !== null && failed > sent || received !== null && failed !== null && received + failed !== sent);
+  return { ...phase, sent, received: inconsistent ? null : received, failed };
+}
+function observationText(observation, findings, phases, reasons) {
+  const increases = findings.filter((finding) => finding.kind === "p95-increase");
+  const long = findings.filter((finding) => finding.kind === "long-p95");
+  const baselineContext = phases.idle.p95_ms >= ABSOLUTE_CUE_MS ? " Replies were already long before test traffic." : "";
+  const increaseContext = increases.length ? ` Sampled p95 replies took at least ${INCREASE_CUE_MS} ms longer during ${increases.map((finding) => finding.phase).join(" and ")} than before test traffic.` : "";
+  if (observation === "failures-observed") return {
+    headline: "Some test requests failed.",
+    description: `Failures occurred in this HTTP test. The successful timings do not include those failures.${increaseContext}${baselineContext}`,
+    action: { title: "Repeat the test and compare failures.", reason: "Change one condition, such as the device connection or other traffic, and check whether the failures recur." }
+  };
+  if (observation === "increase-observed") return {
+    headline: `Sampled replies were slower during ${increases[0].phase}.`,
+    description: `Before transfers, the slower end of successful replies was ${milliseconds(phases.idle.p95_ms)} ms. During ${increases[0].phase}, it was ${milliseconds(phases[increases[0].phase].p95_ms)} ms. Longer network waits can add pauses between repeated agent requests. This test does not measure coding task time.${baselineContext}`,
+    action: { title: "Repeat with one condition changed.", reason: "Compare the same phase after pausing other traffic or changing the device connection." }
+  };
+  if (observation === "long-responses-observed") return {
+    headline: baselineContext ? "Replies were already long before test traffic." : `Long replies appeared during ${long[0].phase}.`,
+    description: baselineContext ? `Before transfers, the slower end of successful replies was ${milliseconds(phases.idle.p95_ms)} ms. Those waits were already present without traffic generated by this test.` : `During ${long[0].phase}, the slower end of successful replies was ${milliseconds(phases[long[0].phase].p95_ms)} ms. ${phases.idle.p95_ms === null ? "Baseline timing is unavailable, so an increase cannot be determined." : `Before transfers, it was ${milliseconds(phases.idle.p95_ms)} ms.`}`,
+    action: { title: "Compare another connection or time.", reason: "Repeat the same test with one condition changed and compare baseline and loaded timings." }
+  };
+  if (observation === "unavailable") return {
+    headline: "Successful timing evidence is unavailable.",
+    description: "This reading has no usable successful HTTP p95 timings. Missing observations are not zero delay.",
+    action: { title: "Run another test.", reason: "A completed attempt with successful probes and counts is needed for timing comparisons." }
+  };
+  if (observation === "limited-observation") {
+    const missing = reasons.some((reason) => ["missing-quality", "missing-counts", "missing-timing"].includes(reason));
+    return {
+      headline: missing ? "This reading lacks enough information for comparison." : "Too brief to judge a busy connection.",
+      description: missing ? "The available replies did not show a large delay, but missing information prevents a complete comparison." : "The available replies did not show a large delay. The test was too limited to judge sustained behavior during transfers.",
+      action: { title: "Repeat with a fuller observation.", reason: "Use the standard test and compare the phase counts and transfer limits alongside the timings." }
+    };
+  }
+  return {
+    headline: "No marked delay appeared in these samples.",
+    description: "This run did not show a large wait or a marked increase in slower replies. This does not rule out a slower individual response or predict future performance.",
+    action: { title: "Compare a repeat when work feels slow.", reason: "A reading taken during the problem can show whether the sampled HTTP timings also change." }
+  };
+}
+function interpretConnection(input = {}) {
+  const metrics = input?.metrics;
+  const quality = input?.quality;
+  const normalized = Object.fromEntries(phaseNames2.map((name) => [name, normalizePhase(metrics?.[name])]));
+  const view = responsiveness({ metrics: normalized, quality });
+  const phases = Object.fromEntries(phaseNames2.map((name) => {
+    const phase = view[name];
+    return [name, {
+      ...phase,
+      increase_ms: name !== "idle" && phase.p95_ms !== null && view.idle.p95_ms !== null ? phase.p95_ms - view.idle.p95_ms : null,
+      p95_is_max: phase.received > 0 ? phase.received < 20 : null
+    }];
+  }));
+  const phaseValues = Object.values(phases);
+  const totalFailed = count(quality?.failed_requests);
+  const probeFailed = phaseValues.every((phase) => phase.failed !== null) ? phaseValues.reduce((total, phase) => total + phase.failed, 0) : null;
+  const failures = totalFailed > 0 || phaseValues.some((phase) => phase.failed > 0);
+  const increases = phaseNames2.filter((name) => name !== "idle" && phases[name].increase_ms >= INCREASE_CUE_MS).map((phase) => ({ kind: "p95-increase", phase, value_ms: phases[phase].increase_ms })).sort((a, b) => b.value_ms - a.value_ms || phaseNames2.indexOf(a.phase) - phaseNames2.indexOf(b.phase));
+  const long = phaseNames2.filter((name) => phases[name].p95_ms >= ABSOLUTE_CUE_MS).map((phase) => ({ kind: "long-p95", phase, value_ms: phases[phase].p95_ms })).sort((a, b) => b.value_ms - a.value_ms || phaseNames2.indexOf(a.phase) - phaseNames2.indexOf(b.phase));
+  const findings = [
+    ...failures ? [{ kind: "request-failures", probe_failed: probeFailed, total_failed: totalFailed }] : [],
+    ...increases,
+    ...long
+  ];
+  const conditions = {
+    "byte-cap": quality?.byte_capped === true,
+    "short-load": quality?.short_load === true,
+    "request-failures": failures,
+    "sparse-samples": phaseNames2.some((name) => phases[name].received !== null && phases[name].received < sampleFloors[name]),
+    "missing-quality": typeof quality?.byte_capped !== "boolean" || typeof quality?.short_load !== "boolean" || totalFailed === null,
+    "missing-counts": phaseValues.some((phase) => phase.sent === null || phase.received === null || phase.failed === null),
+    "missing-timing": phaseValues.some((phase) => phase.p95_ms === null)
+  };
+  const reasons = Object.keys(reasonText).filter((reason) => conditions[reason]);
+  const knownLimit = conditions["byte-cap"] || conditions["short-load"] || failures || conditions["sparse-samples"] || phaseNames2.some((name) => phases[name].p95_ms === null && (phases[name].received !== null || timing(metrics?.[name]?.p95_ms) === null));
+  const coverage = { state: knownLimit ? "limited" : reasons.length ? "unknown" : "no-reported-limits", reasons };
+  const observation = failures ? "failures-observed" : increases.length ? "increase-observed" : long.length ? "long-responses-observed" : phaseValues.every((phase) => phase.p95_ms === null) ? "unavailable" : reasons.length ? "limited-observation" : "no-marked-delay-observed";
+  const qualifications = [
+    "HTTP timings include the device, request handling, route, and Cloudflare endpoint. They do not measure model response time or coding productivity.",
+    "Baseline means before this test traffic. Other applications may still use the connection.",
+    "P95 is the nearest-rank 95th percentile of successful probe times. The 250 ms absolute cue and 100 ms increase cue are editorial prompts, not application performance guarantees.",
+    ...reasons.map((reason) => reasonText[reason]),
+    ...phaseNames2.filter((name) => phases[name].p95_is_max === true).map((name) => `${phaseLabels[name]} p95 is the largest successful timing because there were fewer than 20 successful probes.`),
+    "HTTP throughput is the achieved transfer rate. This test does not prove network saturation or sustained performance."
+  ];
+  return {
+    version: VERSION,
+    observation,
+    ...observationText(observation, findings, phases, reasons),
+    coverage,
+    findings,
+    phases,
+    throughput: { download_mbps: timing(metrics?.download_mbps), upload_mbps: timing(metrics?.upload_mbps) },
+    qualifications
+  };
+}
 
 // src/client-output.mjs
 import { open, lstat, rename, unlink } from "node:fs/promises";
@@ -582,6 +768,9 @@ async function reserveOutput(filename) {
 // src/agent.mjs
 var CLIENT_VERSION = plugin_default.version;
 var OUTPUT_SCHEMA_VERSION = "iqm-client-output-v1";
+var RESULT_ID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/;
+var JSON_RESPONSE_BYTES = 64 * 1024;
+var PUBLICATION_TIMEOUT_MS = 15e3;
 var help = `Internet Quality Map client
 
 Run a bounded HTTP speed test on this execution host. No reading is published by default.
@@ -590,6 +779,8 @@ HTTP latency includes the endpoint and application. It is not ICMP latency or pa
 
 node client.mjs --origin https://internet-quality-map.nf-93f.workers.dev [options]
 
+--plan                               Explain a test offline. No OS commands, network requests, or file writes.
+--check-publication UUID             Check one public result without a test or file write.
 --profile quick|standard             Default quick.
 --network-type wifi|cellular|wired|unknown  Explicit claim. Overrides automatic OS detection.
 --network-info                       Inspect safe OS facts, without a speed test.
@@ -613,6 +804,8 @@ Node.js 24 or later is required. The timed test deadline is 30 seconds.
 OS observation can add 5.3 seconds. Publication can add three requests of up to 15 seconds each.
 Exit 0 means a completed observation, including failed probes. Exit 1 means a CLI, execution, or storage error.
 Exit 2 means publication failed or remains unknown. A pending artifact may already have been published.
+Publication checks exit 0 for confirmed, 2 for not_found or unknown, and 1 for invalid invocation.
+A not_found check describes this service at check time. It does not establish permanent absence.
 Published time is a UTC day. No precise GPS, hostname, or IP is stored in public results.
 Leave unknown observations absent. Report the execution host, not the remote user's connection.
 System sources are submitter observations, not server verification. Never infer service from ASN, speed, effectiveType, or a virtual adapter.
@@ -621,15 +814,21 @@ After publication this client prints the public result ID and link, never its pu
 `;
 function parseArguments(args) {
   const options = { origin: "https://internet-quality-map.nf-93f.workers.dev", profile: "quick", networkType: "unknown", execution: "agent-host", publish: false, location: null };
-  const values = /* @__PURE__ */ new Map([["--origin", "origin"], ["--profile", "profile"], ["--network-type", "networkType"], ["--execution", "execution"], ["--location", "location"], ["--cell-lat", "cellLat"], ["--cell-lon", "cellLon"], ["--output", "output"]]);
+  const values = /* @__PURE__ */ new Map([["--origin", "origin"], ["--profile", "profile"], ["--network-type", "networkType"], ["--execution", "execution"], ["--location", "location"], ["--cell-lat", "cellLat"], ["--cell-lon", "cellLon"], ["--output", "output"], ["--check-publication", "checkPublication"]]);
   for (const flag of ["network-type-source", "internet-service", "internet-service-source", "wifi-standard", "wifi-standard-source", "wifi-band", "wifi-band-source"]) values.set("--" + flag, flag);
   const seen = /* @__PURE__ */ new Set();
   for (let index = 0; index < args.length; index++) {
     const flag = args[index];
     if (seen.has(flag)) throw new Error("Repeated option " + flag);
     seen.add(flag);
-    if (flag === "--help") return { help: true };
-    if (flag === "--version") return { version: true };
+    if (flag === "--help" || flag === "--version") {
+      if (args.includes("--check-publication")) throw new Error("--check-publication accepts only --origin alongside its result ID.");
+      return flag === "--help" ? { help: true } : { version: true };
+    }
+    if (flag === "--plan") {
+      options.plan = true;
+      continue;
+    }
     if (flag === "--publish") {
       options.publish = true;
       continue;
@@ -649,6 +848,10 @@ function parseArguments(args) {
   options.networkTypeExplicit = seen.has("--network-type");
   if (options.output !== void 0 && (!options.output.trim() || options.output.includes("\0"))) throw new Error("--output requires a nonempty file path.");
   if (options.networkInfo && [...seen].some((flag) => !["--network-info", "--no-network-detection"].includes(flag))) throw new Error("--network-info cannot be combined with test or publication options.");
+  if (options.checkPublication !== void 0) {
+    if ([...seen].some((flag) => !["--check-publication", "--origin"].includes(flag))) throw new Error("--check-publication accepts only --origin alongside its result ID.");
+    if (!RESULT_ID.test(options.checkPublication)) throw new Error("--check-publication requires a canonical lower-case UUID.");
+  }
   const url = new URL(options.origin);
   const loopback = ["localhost", "127.0.0.1", "[::1]"].includes(url.hostname);
   if (url.username || url.password || url.search || url.hash || url.pathname !== "/" || url.protocol !== "https:" && !(url.protocol === "http:" && loopback)) throw new Error("Origin must be an HTTPS origin, or loopback HTTP for local development.");
@@ -689,10 +892,88 @@ function parseArguments(args) {
   }
   return options;
 }
-async function receiptFromResponse(response, session) {
-  if (!response.ok) return null;
+function executionPlan(options) {
+  const profile = PROFILES[options.profile];
+  const automatic = !options.networkTypeExplicit && options.networkDetection !== false;
+  const observation = automatic ? 5300 : 0;
+  const publishing = options.publish ? 3 * PUBLICATION_TIMEOUT_MS : 0;
+  return {
+    schema_version: "iqm-execution-plan-v1",
+    client_version: CLIENT_VERSION,
+    method: METHOD,
+    profile: options.profile,
+    execution: options.execution,
+    network_context: { network_type: options.networkType, ...options.networkDetails ? { network_details: options.networkDetails } : {} },
+    endpoints: { probe: TEST_ENDPOINTS.download, ...TEST_ENDPOINTS },
+    payload_budgets: { download_bytes: profile.max_download_bytes, upload_bytes: profile.max_upload_bytes, total_bytes: profile.max_download_bytes + profile.max_upload_bytes, excludes: "HTTP probe and protocol overhead" },
+    timing_bounds: { measurement_ms: 3e4, os_before_ms: automatic ? 3500 : 0, os_after_ms: automatic ? 1800 : 0, publication_requests: options.publish ? 3 : 0, publication_request_ms: PUBLICATION_TIMEOUT_MS, end_to_end_ms: 3e4 + observation + publishing, excludes: "Process startup, filesystem work, and scheduling delays" },
+    os_observation: { enabled: automatic, dns_hostname: automatic ? "speed.cloudflare.com" : null, raw_identifiers_in_output: false, provenance: "OS observations, not hardware attestation" },
+    output: { path: options.output ?? null, requires_new_path: Boolean(options.output), saved_before_publication: Boolean(options.output && options.publish) },
+    publication: {
+      requested: options.publish,
+      location: options.publish ? options.cellLat !== void 0 ? { source: "device", cell_lat: options.cellLat, cell_lon: options.cellLon } : { source: options.location } : null,
+      endpoints: options.publish ? { session: options.origin + "/api/v1/sessions", submit: options.origin + "/api/v1/results", confirmation: options.origin + "/api/v1/results/{id}" } : null
+    },
+    plan_effects: { network_requests: 0, os_commands: 0, file_writes: 0 }
+  };
+}
+async function responseJSON(response) {
+  const declared = response.headers.get("content-length");
+  if (declared !== null && /^\d+$/.test(declared) && Number(declared) > JSON_RESPONSE_BYTES) {
+    await response.body?.cancel().catch(() => {
+    });
+    throw new Error("JSON response exceeded its byte limit.");
+  }
+  if (!response.body) throw new Error("JSON response body is missing.");
+  const reader = response.body.getReader();
+  const chunks = [];
+  let bytes = 0;
   try {
-    const body = await response.json();
+    while (true) {
+      const { done, value } = await reader.read();
+      if (done) break;
+      bytes += value.byteLength;
+      if (bytes > JSON_RESPONSE_BYTES) throw new Error("JSON response exceeded its byte limit.");
+      chunks.push(value);
+    }
+    return JSON.parse(Buffer.concat(chunks, bytes).toString("utf8"));
+  } catch (error) {
+    await reader.cancel().catch(() => {
+    });
+    throw error;
+  } finally {
+    reader.releaseLock();
+  }
+}
+async function checkPublication(options, fetcher = fetch) {
+  const id = options.checkPublication;
+  const output = { schema_version: "iqm-publication-check-v1", client_version: CLIENT_VERSION, id, url: options.origin + "/?result=" + id, status: "unknown" };
+  try {
+    const response = await fetcher(options.origin + "/api/v1/results/" + id, {
+      signal: AbortSignal.timeout(PUBLICATION_TIMEOUT_MS),
+      cache: "no-store",
+      redirect: "error"
+    });
+    if (response.status === 200) {
+      const body = await responseJSON(response);
+      if (body?.result?.id === id && (body.id === void 0 || body.id === id)) output.status = "confirmed";
+    } else {
+      await response.body?.cancel().catch(() => {
+      });
+      if (response.status === 404) output.status = "not_found";
+    }
+  } catch {
+  }
+  return output;
+}
+async function receiptFromResponse(response, session) {
+  if (!response.ok) {
+    await response.body?.cancel().catch(() => {
+    });
+    return null;
+  }
+  try {
+    const body = await responseJSON(response);
     if (body?.result?.id !== session.id || body.id !== void 0 && body.id !== session.id || JSON.stringify(body.result).includes(session.token)) return null;
     return { published: true, id: session.id, result: body.result };
   } catch {
@@ -706,16 +987,20 @@ async function publishMeasurement(options, measurement, fetcher = fetch, onSessi
     const response2 = await fetcher(options.origin + "/api/v1/sessions", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      signal: AbortSignal.timeout(15e3),
+      signal: AbortSignal.timeout(PUBLICATION_TIMEOUT_MS),
       redirect: "error",
       body: JSON.stringify({ profile: measurement.profile, runtime: measurement.runtime })
     });
-    if (!response2.ok) throw new Error();
-    session = await response2.json();
+    if (!response2.ok) {
+      await response2.body?.cancel().catch(() => {
+      });
+      throw new Error();
+    }
+    session = await responseJSON(response2);
   } catch {
     throw new Error("Could not create a publishing session.");
   }
-  if (typeof session?.id !== "string" || !/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/.test(session.id) || typeof session.token !== "string" || session.token.length > 2048 || !/^[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+$/.test(session.token)) {
+  if (typeof session?.id !== "string" || !RESULT_ID.test(session.id) || typeof session.token !== "string" || session.token.length > 2048 || !/^[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+$/.test(session.token)) {
     throw new Error("Service returned an invalid publishing session.");
   }
   await onSession(session.id);
@@ -725,7 +1010,7 @@ async function publishMeasurement(options, measurement, fetcher = fetch, onSessi
     response = await fetcher(options.origin + "/api/v1/results", {
       method: "POST",
       headers: { "Content-Type": "application/json", Authorization: "Bearer " + session.token },
-      signal: AbortSignal.timeout(15e3),
+      signal: AbortSignal.timeout(PUBLICATION_TIMEOUT_MS),
       redirect: "error",
       body: JSON.stringify({ consent: "public-map-v1", measurement, location, ...options.networkDetails ? { network_details: options.networkDetails } : {} })
     });
@@ -734,7 +1019,7 @@ async function publishMeasurement(options, measurement, fetcher = fetch, onSessi
   if (response?.status >= 400 && response.status < 500) {
     let code;
     try {
-      const body = await response.json();
+      const body = await responseJSON(response);
       if (["invalid_session", "invalid_schema", "invalid_json", "body_too_large", "session_mismatch", "rate_limited", "daily_quota", "publication_conflict"].includes(body?.error?.code)) code = body.error.code;
     } catch {
     }
@@ -748,7 +1033,7 @@ async function publishMeasurement(options, measurement, fetcher = fetch, onSessi
   }
   try {
     const readback = await fetcher(options.origin + "/api/v1/results/" + session.id, {
-      signal: AbortSignal.timeout(15e3),
+      signal: AbortSignal.timeout(PUBLICATION_TIMEOUT_MS),
       cache: "no-store",
       redirect: "error"
     });
@@ -772,6 +1057,16 @@ async function main(args = process.argv.slice(2), { measure = runTest, fetcher =
     return;
   }
   assertSupportedRuntime(process.versions.node);
+  if (options.plan) {
+    write(JSON.stringify(executionPlan(options), null, 2) + "\n");
+    return;
+  }
+  if (options.checkPublication) {
+    const checked = await checkPublication(options, fetcher);
+    write(JSON.stringify(checked, null, 2) + "\n");
+    if (checked.status !== "confirmed") process.exitCode = 2;
+    return;
+  }
   const artifact = options.output ? await reserveOutput(options.output) : null;
   try {
     const controller = new AbortController();
@@ -792,6 +1087,7 @@ async function main(args = process.argv.slice(2), { measure = runTest, fetcher =
       process.removeListener("SIGTERM", stop);
     }
     const output = { schema_version: OUTPUT_SCHEMA_VERSION, client_version: CLIENT_VERSION, method: METHOD, measurement, ...options.networkDetails ? { network_details: options.networkDetails } : {}, metrics: summarizeMeasurement(measurement), quality: measurementQuality(measurement), published: options.publish ? null : false, publication: { status: options.publish ? "pending" : "private" } };
+    output.interpretation = interpretConnection(output);
     await artifact?.save(output);
     if (options.publish) {
       try {
@@ -830,6 +1126,8 @@ export {
   CLIENT_VERSION,
   OUTPUT_SCHEMA_VERSION,
   assertSupportedRuntime,
+  checkPublication,
+  executionPlan,
   main,
   parseArguments,
   publishMeasurement
