@@ -1,0 +1,20 @@
+{
+  "name": "internet-quality-map",
+  "interface": {
+    "displayName": "Internet Quality Map"
+  },
+  "plugins": [
+    {
+      "name": "internet-quality-map",
+      "source": {
+        "source": "local",
+        "path": "./"
+      },
+      "policy": {
+        "installation": "AVAILABLE",
+        "authentication": "ON_INSTALL"
+      },
+      "category": "Developer Tools"
+    }
+  ]
+}
