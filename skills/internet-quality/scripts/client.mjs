@@ -32,10 +32,10 @@ var fact = (value) => ({ value, source: "system" });
 var interfaceName = (value) => typeof value === "string" && /^[a-zA-Z0-9_.:-]{1,32}$/.test(value);
 var proxyConfigured = (env) => ["HTTP_PROXY", "HTTPS_PROXY", "ALL_PROXY", "http_proxy", "https_proxy", "all_proxy"].some((key) => Boolean(env[key]));
 function runCommand(file, args, { signal, timeout = 600, acceptedExitCodes = [0] } = {}) {
-  return new Promise((resolve, reject) => {
+  return new Promise((resolve2, reject) => {
     execFile(file, args, { encoding: "utf8", timeout, maxBuffer: 128 * 1024, signal, windowsHide: true, env: { ...process.env, LC_ALL: "C", LANG: "C" } }, (error, stdout) => {
       if (error && !(Number.isInteger(error.code) && acceptedExitCodes.includes(error.code) && !error.killed && !signal?.aborted)) reject(new Error("OS observation unavailable."));
-      else resolve(stdout);
+      else resolve2(stdout);
     });
   });
 }
@@ -74,7 +74,7 @@ function linuxRadio(text) {
   if (standards.length === 1) fields.wifi_standard = fact(standards[0][1]);
   return fields;
 }
-async function observeHostNetwork({ platform = process.platform, run = runCommand, resolve = resolveEndpoint, realpath: resolvePath = realpath, env = process.env, signal } = {}) {
+async function observeHostNetwork({ platform = process.platform, run = runCommand, resolve: resolve2 = resolveEndpoint, realpath: resolvePath = realpath, env = process.env, signal } = {}) {
   signal?.throwIfAborted();
   if (proxyConfigured(env) || !["darwin", "linux", "win32"].includes(platform)) return unknown();
   const controller = new AbortController();
@@ -136,7 +136,7 @@ async function observeHostNetwork({ platform = process.platform, run = runComman
   }
   try {
     if (!await noGuestMarkers()) return unknown();
-    const addresses = [...new Set(await Promise.race([resolve(), new Promise((resolveTimeout) => activeSignal.addEventListener("abort", () => resolveTimeout([]), { once: true }))]))];
+    const addresses = [...new Set(await Promise.race([resolve2(), new Promise((resolveTimeout) => activeSignal.addEventListener("abort", () => resolveTimeout([]), { once: true }))]))];
     activeSignal.throwIfAborted();
     if (!addresses.length || addresses.length > 8 || addresses.some((address) => typeof address !== "string" || !/^[0-9a-fA-F:.]+$/.test(address))) return unknown();
     const route = await routes(addresses);
@@ -281,6 +281,14 @@ function summarizeMeasurement({ phases }) {
   const throughput = ({ transfer }) => transfer && transfer.bytes > 0 && transfer.elapsed_ms > 0 ? transfer.bytes * 8 / transfer.elapsed_ms / 1e3 : null;
   return { download_mbps: throughput(download), upload_mbps: throughput(upload), idle: summarizePhase(idle), download: summarizePhase(download), upload: summarizePhase(upload) };
 }
+function measurementQuality(measurement) {
+  const transfers = measurement.phases.filter((phase) => phase.transfer).map((phase) => phase.transfer);
+  return {
+    byte_capped: transfers.some((transfer) => transfer.termination === "byte_limit"),
+    failed_requests: transfers.reduce((total, transfer) => total + transfer.failed_requests, 0) + measurement.phases.reduce((total, phase) => total + phase.samples.filter((sample) => sample.status !== "ok").length, 0),
+    short_load: transfers.some((transfer) => transfer.elapsed_ms < PROFILES[measurement.profile].load_ms * 0.8)
+  };
+}
 function abortError(message) {
   const error = new Error(message);
   error.name = "AbortError";
@@ -313,11 +321,11 @@ function scope(parent, milliseconds, reason) {
 }
 function pause(milliseconds, signal) {
   if (signal.aborted) return Promise.resolve();
-  return new Promise((resolve) => {
+  return new Promise((resolve2) => {
     const done = () => {
       clearTimeout(timer);
       signal.removeEventListener("abort", done);
-      resolve();
+      resolve2();
     };
     const timer = setTimeout(done, Math.max(0, milliseconds));
     signal.addEventListener("abort", done, { once: true });
@@ -489,7 +497,91 @@ async function runTestWithTiming({ profile = "quick", runtime, execution, networ
   }
 }
 
+// ../../plugins/internet-quality-map/plugin.json
+var plugin_default = {
+  $schema: "https://agent-plugins.org/schemas/1.0.0/plugin.schema.json",
+  name: "internet-quality-map",
+  version: "0.2.0",
+  description: "Measure Internet responsiveness for agentic workflows and read community connection reports.",
+  homepage: "https://internet-quality-map.nf-93f.workers.dev/",
+  keywords: ["internet", "latency", "agent", "connectivity"],
+  extensions: {
+    "com.openai": {
+      requires_local_executor: true,
+      interface: {
+        displayName: "Internet Quality Map",
+        shortDescription: "Test agent connectivity",
+        longDescription: "Read community reports, run a bounded connection test, and contribute a coarse-area result with consent.",
+        category: "Developer Tools",
+        capabilities: ["Read", "Write"],
+        websiteURL: "https://internet-quality-map.nf-93f.workers.dev/",
+        privacyPolicyURL: "https://internet-quality-map.nf-93f.workers.dev/privacy",
+        composerIcon: "./assets/icon.svg",
+        logo: "./assets/icon.svg"
+      }
+    }
+  }
+};
+
+// src/client-output.mjs
+import { open, lstat, rename, unlink } from "node:fs/promises";
+import { dirname, basename, resolve } from "node:path";
+import { randomUUID } from "node:crypto";
+var OutputFileError = class extends Error {
+};
+async function reserveOutput(filename) {
+  const path = resolve(filename);
+  let identity;
+  let currentFile;
+  let completed = false;
+  const ownsPath = async () => {
+    const current = await lstat(path);
+    return current.isFile() && current.dev === identity.dev && current.ino === identity.ino;
+  };
+  try {
+    currentFile = await open(path, "wx", 384);
+    identity = await currentFile.stat();
+  } catch {
+    await currentFile?.close();
+    throw new OutputFileError("Cannot reserve output path. Choose a new file in a writable private directory. Existing files and symlinks are refused.");
+  }
+  return {
+    async save(output) {
+      const temporary = resolve(dirname(path), "." + basename(path) + "." + randomUUID() + ".tmp");
+      let file;
+      try {
+        file = await open(temporary, "wx", 384);
+        await file.writeFile(JSON.stringify(output, null, 2) + "\n");
+        await file.sync();
+        const nextIdentity = await file.stat();
+        if (!await ownsPath()) throw new Error("Output path changed.");
+        await rename(temporary, path);
+        await currentFile.close();
+        currentFile = file;
+        file = null;
+        identity = nextIdentity;
+        completed = true;
+      } catch {
+        throw new OutputFileError("Cannot save output artifact. Publication stops. Inspect the reserved output path before retrying.");
+      } finally {
+        await file?.close();
+        await unlink(temporary).catch(() => {
+        });
+      }
+    },
+    async close() {
+      try {
+        if (!completed && await ownsPath().catch(() => false)) await unlink(path);
+      } finally {
+        await currentFile.close();
+      }
+    }
+  };
+}
+
 // src/agent.mjs
+var CLIENT_VERSION = plugin_default.version;
+var OUTPUT_SCHEMA_VERSION = "iqm-client-output-v1";
 var help = `Internet Quality Map client
 
 Run a bounded HTTP speed test on this execution host. No reading is published by default.
@@ -513,8 +605,14 @@ node client.mjs --origin https://internet-quality-map.nf-93f.workers.dev [option
 --publish                            Consent to publish the returned reading and network ASN hint.
 --location ip|none                   Required with --publish. IP adds an approximate public area.
 --cell-lat N --cell-lon N            Optional coarse 0.25-degree device-supplied cell instead.
+--output PATH                        Save a private artifact before publication. Requires a new path.
+--version                            Print the client release without network requests.
 --help                               Show this text without network requests.
 
+Node.js 24 or later is required. The timed test deadline is 30 seconds.
+OS observation can add 5.3 seconds. Publication can add three requests of up to 15 seconds each.
+Exit 0 means a completed observation, including failed probes. Exit 1 means a CLI, execution, or storage error.
+Exit 2 means publication failed or remains unknown. A pending artifact may already have been published.
 Published time is a UTC day. No precise GPS, hostname, or IP is stored in public results.
 Leave unknown observations absent. Report the execution host, not the remote user's connection.
 System sources are submitter observations, not server verification. Never infer service from ASN, speed, effectiveType, or a virtual adapter.
@@ -523,7 +621,7 @@ After publication this client prints the public result ID and link, never its pu
 `;
 function parseArguments(args) {
   const options = { origin: "https://internet-quality-map.nf-93f.workers.dev", profile: "quick", networkType: "unknown", execution: "agent-host", publish: false, location: null };
-  const values = /* @__PURE__ */ new Map([["--origin", "origin"], ["--profile", "profile"], ["--network-type", "networkType"], ["--execution", "execution"], ["--location", "location"], ["--cell-lat", "cellLat"], ["--cell-lon", "cellLon"]]);
+  const values = /* @__PURE__ */ new Map([["--origin", "origin"], ["--profile", "profile"], ["--network-type", "networkType"], ["--execution", "execution"], ["--location", "location"], ["--cell-lat", "cellLat"], ["--cell-lon", "cellLon"], ["--output", "output"]]);
   for (const flag of ["network-type-source", "internet-service", "internet-service-source", "wifi-standard", "wifi-standard-source", "wifi-band", "wifi-band-source"]) values.set("--" + flag, flag);
   const seen = /* @__PURE__ */ new Set();
   for (let index = 0; index < args.length; index++) {
@@ -531,6 +629,7 @@ function parseArguments(args) {
     if (seen.has(flag)) throw new Error("Repeated option " + flag);
     seen.add(flag);
     if (flag === "--help") return { help: true };
+    if (flag === "--version") return { version: true };
     if (flag === "--publish") {
       options.publish = true;
       continue;
@@ -548,6 +647,7 @@ function parseArguments(args) {
     options[key] = args[++index];
   }
   options.networkTypeExplicit = seen.has("--network-type");
+  if (options.output !== void 0 && (!options.output.trim() || options.output.includes("\0"))) throw new Error("--output requires a nonempty file path.");
   if (options.networkInfo && [...seen].some((flag) => !["--network-info", "--no-network-detection"].includes(flag))) throw new Error("--network-info cannot be combined with test or publication options.");
   const url = new URL(options.origin);
   const loopback = ["localhost", "127.0.0.1", "[::1]"].includes(url.hostname);
@@ -599,7 +699,8 @@ async function receiptFromResponse(response, session) {
     return null;
   }
 }
-async function publishMeasurement(options, measurement, fetcher = fetch) {
+async function publishMeasurement(options, measurement, fetcher = fetch, onSession = async () => {
+}) {
   let session;
   try {
     const response2 = await fetcher(options.origin + "/api/v1/sessions", {
@@ -617,6 +718,7 @@ async function publishMeasurement(options, measurement, fetcher = fetch) {
   if (typeof session?.id !== "string" || !/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/.test(session.id) || typeof session.token !== "string" || session.token.length > 2048 || !/^[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+$/.test(session.token)) {
     throw new Error("Service returned an invalid publishing session.");
   }
+  await onSession(session.id);
   const location = options.cellLat !== void 0 ? { source: "device", cell_lat: options.cellLat, cell_lon: options.cellLon } : { source: options.location };
   let response;
   try {
@@ -629,7 +731,17 @@ async function publishMeasurement(options, measurement, fetcher = fetch) {
     });
   } catch {
   }
-  if (response?.status >= 400 && response.status < 500) throw new Error("Publication rejected with HTTP " + response.status + ".");
+  if (response?.status >= 400 && response.status < 500) {
+    let code;
+    try {
+      const body = await response.json();
+      if (["invalid_session", "invalid_schema", "invalid_json", "body_too_large", "session_mismatch", "rate_limited", "daily_quota", "publication_conflict"].includes(body?.error?.code)) code = body.error.code;
+    } catch {
+    }
+    const error = new Error("Publication rejected with HTTP " + response.status + "." + (code ? " Code " + code + "." : ""));
+    if (code) error.code = code;
+    throw error;
+  }
   if (response) {
     const receipt = await receiptFromResponse(response, session);
     if (receipt) return receipt;
@@ -646,45 +758,67 @@ async function publishMeasurement(options, measurement, fetcher = fetch) {
   }
   return { published: null, id: session.id, error: "Publication status is unknown. Check the result link before publishing again." };
 }
+function assertSupportedRuntime(version) {
+  if (Number(version.split(".")[0]) < 24) throw new Error("Node.js 24 or later is required. No test was started.");
+}
 async function main(args = process.argv.slice(2), { measure = runTest, fetcher = fetch, observe, write = (value) => process.stdout.write(value) } = {}) {
   const options = parseArguments(args);
   if (options.help) {
     write(help);
     return;
   }
-  const controller = new AbortController();
-  const stop = () => controller.abort();
-  process.once("SIGINT", stop);
-  process.once("SIGTERM", stop);
-  let measurement;
-  try {
-    const resolved = await withNetworkContext(options, (context) => measure({ profile: options.profile, runtime: "node", execution: options.execution, networkType: context.networkType, signal: controller.signal }), { observe, signal: controller.signal });
-    if (options.networkInfo) {
-      write(JSON.stringify(resolved, null, 2) + "\n");
-      return;
-    }
-    measurement = resolved.measurement;
-    options.networkDetails = resolved.networkDetails;
-  } finally {
-    process.removeListener("SIGINT", stop);
-    process.removeListener("SIGTERM", stop);
+  if (options.version) {
+    write(CLIENT_VERSION + "\n");
+    return;
   }
-  const output = { method: METHOD, measurement, ...options.networkDetails ? { network_details: options.networkDetails } : {}, metrics: summarizeMeasurement(measurement), published: false };
-  if (options.publish) {
+  assertSupportedRuntime(process.versions.node);
+  const artifact = options.output ? await reserveOutput(options.output) : null;
+  try {
+    const controller = new AbortController();
+    const stop = () => controller.abort();
+    process.once("SIGINT", stop);
+    process.once("SIGTERM", stop);
+    let measurement;
     try {
-      const receipt = await publishMeasurement(options, measurement, fetcher);
-      output.published = receipt.published;
-      output.publication = { id: receipt.id, url: options.origin + "/?result=" + encodeURIComponent(receipt.id), ...receipt.result ? { result: receipt.result } : { status: "unknown" } };
-      if (receipt.published === null) {
-        output.publication_error = receipt.error;
+      const resolved = await withNetworkContext(options, (context) => measure({ profile: options.profile, runtime: "node", execution: options.execution, networkType: context.networkType, signal: controller.signal }), { observe, signal: controller.signal });
+      if (options.networkInfo) {
+        write(JSON.stringify(resolved, null, 2) + "\n");
+        return;
+      }
+      measurement = resolved.measurement;
+      options.networkDetails = resolved.networkDetails;
+    } finally {
+      process.removeListener("SIGINT", stop);
+      process.removeListener("SIGTERM", stop);
+    }
+    const output = { schema_version: OUTPUT_SCHEMA_VERSION, client_version: CLIENT_VERSION, method: METHOD, measurement, ...options.networkDetails ? { network_details: options.networkDetails } : {}, metrics: summarizeMeasurement(measurement), quality: measurementQuality(measurement), published: options.publish ? null : false, publication: { status: options.publish ? "pending" : "private" } };
+    await artifact?.save(output);
+    if (options.publish) {
+      try {
+        const receipt = await publishMeasurement(options, measurement, fetcher, async (id) => {
+          output.publication = { status: "pending", id, url: options.origin + "/?result=" + encodeURIComponent(id) };
+          await artifact?.save(output);
+        });
+        output.published = receipt.published;
+        output.publication = { status: receipt.published ? "confirmed" : "unknown", id: receipt.id, url: options.origin + "/?result=" + encodeURIComponent(receipt.id), ...receipt.result ? { result: receipt.result } : {} };
+        if (receipt.published === null) {
+          output.publication_error = receipt.error;
+          process.exitCode = 2;
+        }
+      } catch (error) {
+        if (error instanceof OutputFileError) throw error;
+        output.published = false;
+        output.publication.status = "failed";
+        output.publication_error = error.message;
+        if (error.code) output.publication_error_code = error.code;
         process.exitCode = 2;
       }
-    } catch (error) {
-      output.publication_error = error.message;
-      process.exitCode = 2;
+      await artifact?.save(output);
     }
+    write(JSON.stringify(output, null, 2) + "\n");
+  } finally {
+    await artifact?.close();
   }
-  write(JSON.stringify(output, null, 2) + "\n");
 }
 if (process.argv[1] && realpathSync(process.argv[1]) === realpathSync(fileURLToPath(import.meta.url))) {
   main().catch((error) => {
@@ -693,6 +827,9 @@ if (process.argv[1] && realpathSync(process.argv[1]) === realpathSync(fileURLToP
   });
 }
 export {
+  CLIENT_VERSION,
+  OUTPUT_SCHEMA_VERSION,
+  assertSupportedRuntime,
   main,
   parseArguments,
   publishMeasurement
