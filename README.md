@@ -13,3 +13,7 @@ Release 0.2.0 adds `--version`, versioned local output, shared quality fields, a
 Public service and method documentation are at https://internet-quality-map.nf-93f.workers.dev/.
 
 This archive is a distribution artifact. It is not proof of installation, marketplace acceptance, identity verification, or in-app testing. No repository-wide license has been assigned.
+
+Release 0.3.0 adds `--plan` for an offline permission and traffic inventory and `--check-publication UUID` for a read-only status check. Reconciliation does not run another measurement or change a result file. The website links a versioned build and permission record alongside each release. See the skill and public trust page before execution.
+
+Release 0.3.1 also bounds probe and upload reply bodies to 64 KiB. An oversized reply stops the measurement with an error. It is not reported as a finding about the connection.
