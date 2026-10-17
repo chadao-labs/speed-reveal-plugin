@@ -1,10 +1,10 @@
 #!/usr/bin/env node
 
-// src/host-network.mjs
+// src/client/host-network.mjs
 import { execFile } from "node:child_process";
 import { realpath } from "node:fs/promises";
 
-// public/network-details.js
+// src/domain/network-details.js
 var networkFields = Object.freeze({
   device_link: { label: "Device connection", values: { wifi: "Wi-Fi", wired: "Ethernet", cellular: "Cellular" } },
   internet_service: { label: "Internet service", values: { "2g-3g": "2G/3G", "4g-lte": "4G/LTE", "5g": "5G", fibre: "Fibre", cable: "Cable", dsl: "DSL", satellite: "Satellite", other: "Other" } },
@@ -26,7 +26,7 @@ function networkDetailsError(details, networkType) {
   return null;
 }
 
-// src/host-network.mjs
+// src/client/host-network.mjs
 var unknown = () => ({ networkType: "unknown" });
 var fact = (value) => ({ value, source: "system" });
 var interfaceName = (value) => typeof value === "string" && /^[a-zA-Z0-9_.:-]{1,32}$/.test(value);
@@ -239,11 +239,19 @@ async function withNetworkContext(options, operation, { observe = observeHostNet
   return { measurement, ...Object.keys(networkDetails).length ? { networkDetails } : {} };
 }
 
-// src/agent.mjs
+// src/domain/client-context.js
+var clientContextFields = Object.freeze({
+  operating_system: { label: "Operating system", values: { windows: "Windows", macos: "macOS", linux: "Linux", android: "Android", ios: "iOS / iPadOS", chromeos: "ChromeOS", freebsd: "FreeBSD", other: "Other" } },
+  device_type: { label: "Device type", values: { computer: "Computer", phone: "Phone", tablet: "Tablet", server: "Server", router: "Router", other: "Other" } },
+  architecture: { label: "Runtime architecture", values: { x64: "x64", arm64: "ARM64", arm: "ARM", ia32: "x86", other: "Other" } },
+  browser: { label: "Browser", values: { chrome: "Chrome / Chromium", safari: "Safari", firefox: "Firefox", edge: "Edge", opera: "Opera", other: "Other" } }
+});
+
+// src/client/agent.mjs
 import { fileURLToPath } from "node:url";
 import { realpathSync } from "node:fs";
 
-// public/measure.js
+// ../../packages/http-measurement/profiles.js
 var METHOD = "iqm-http-v1";
 var MiB = 1024 * 1024;
 var PROFILES = Object.freeze({
@@ -255,7 +263,8 @@ var PROFILE_IDS = Object.freeze(Object.keys(PROFILES));
 var MAX_TRANSFER_BYTES = Math.max(...Object.values(PROFILES).flatMap((profile) => [profile.max_download_bytes, profile.max_upload_bytes]));
 var SCHEDULE = Object.freeze({ probe_interval_ms: 250, request_timeout_ms: 3e3, overall_ms: 3e4 });
 var TEST_ENDPOINTS = Object.freeze({ download: "https://speed.cloudflare.com/__down", upload: "https://speed.cloudflare.com/__up" });
-var now = () => performance.now();
+
+// ../../packages/http-measurement/summary.js
 function summarizePhase({ samples }) {
   const values = samples.filter((sample) => sample.status === "ok").map((sample) => sample.elapsed_ms).sort((a, b) => a - b);
   const differences = [];
@@ -299,6 +308,9 @@ function measurementQuality(measurement) {
     short_load: transfers.some((transfer) => transfer.elapsed_ms < PROFILES[measurement.profile].load_ms * 0.8)
   };
 }
+
+// ../../packages/http-measurement/engine.js
+var now = () => performance.now();
 function abortError(message) {
   const error = new Error(message);
   error.name = "AbortError";
@@ -530,10 +542,15 @@ async function runTestWithTiming({ profile = "quick", runtime, execution, networ
 var plugin_default = {
   $schema: "https://agent-plugins.org/schemas/1.0.0/plugin.schema.json",
   name: "internet-quality-map",
-  version: "0.4.0",
+  version: "0.7.0",
   description: "Measure Internet responsiveness for agentic workflows and read community connection reports.",
   homepage: "https://internet-quality-map.nf-93f.workers.dev/",
-  keywords: ["internet", "latency", "agent", "connectivity"],
+  keywords: [
+    "internet",
+    "latency",
+    "agent",
+    "connectivity"
+  ],
   extensions: {
     "com.openai": {
       requires_local_executor: true,
@@ -542,7 +559,10 @@ var plugin_default = {
         shortDescription: "Test agent connectivity",
         longDescription: "Read community reports, run a bounded connection test, and contribute a coarse-area result with consent.",
         category: "Developer Tools",
-        capabilities: ["Read", "Write"],
+        capabilities: [
+          "Read",
+          "Write"
+        ],
         websiteURL: "https://internet-quality-map.nf-93f.workers.dev/",
         privacyPolicyURL: "https://internet-quality-map.nf-93f.workers.dev/privacy",
         composerIcon: "./assets/icon.svg",
@@ -552,7 +572,7 @@ var plugin_default = {
   }
 };
 
-// public/responsiveness.js
+// src/domain/responsiveness.js
 var phaseNames = ["idle", "download", "upload"];
 var directions = ["download", "upload"];
 var sampleFloors = { idle: 4, download: 8, upload: 8 };
@@ -637,7 +657,7 @@ var metricDefinitions = Object.freeze({
   upload_mbps: throughput("Upload HTTP throughput", "upload_mbps")
 });
 
-// public/interpretation.js
+// src/domain/interpretation.js
 var VERSION = "iqm-interpretation-v2";
 var ABSOLUTE_CUE_MS = 250;
 var INCREASE_CUE_MS = 100;
@@ -732,7 +752,7 @@ function interpretConnection(input = {}) {
   };
 }
 
-// src/client-output.mjs
+// src/client/client-output.mjs
 import { open, lstat, rename, unlink } from "node:fs/promises";
 import { dirname, basename, resolve } from "node:path";
 import { randomUUID } from "node:crypto";
@@ -788,7 +808,7 @@ async function reserveOutput(filename) {
   };
 }
 
-// src/agent.mjs
+// src/client/agent.mjs
 var CLIENT_VERSION = plugin_default.version;
 var OUTPUT_SCHEMA_VERSION = "iqm-client-output-v1";
 var RESULT_ID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/;
@@ -809,9 +829,11 @@ node client.mjs --origin https://internet-quality-map.nf-93f.workers.dev [option
 --ack-payload-bytes INTEGER           Exact selected total. Extended execution requires 2147483648.
                                      Plans need no acknowledgement; supplied values must match.
                                      Cannot combine with --help or --version.
---network-type wifi|cellular|wired|unknown  Explicit claim. Overrides automatic OS detection.
+--network-type wifi|cellular|wired|unknown  Explicit claim. Overrides automatic link detection.
 --network-info                       Inspect safe OS facts, without a speed test.
 --no-network-detection               Disable automatic OS observation.
+--device-type VALUE                  computer|phone|tablet|server|router|other, when known.
+--device-type-source user|system     Required with --device-type. Never infer from the OS.
 --network-type-source user|system    Optional evidence for the known device link.
 --internet-service VALUE             2g-3g|4g-lte|5g|fibre|cable|dsl|satellite|other.
 --wifi-standard VALUE                802.11a|802.11b|802.11g|802.11n|802.11ac|802.11ax|802.11be.
@@ -821,6 +843,7 @@ node client.mjs --origin https://internet-quality-map.nf-93f.workers.dev [option
 --wifi-band-source user|system       Required when band is supplied.
 --execution this-device|agent-host    Default agent-host. Remote agents measure their server.
 --publish                            Consent to publish the returned reading and network ASN hint.
+                                     Includes sourced client context and network details.
 --location ip|none                   Required with --publish. IP adds an approximate public area.
 --cell-lat N --cell-lon N            Optional coarse 0.25-degree device-supplied cell instead.
 --output PATH                        Save a private artifact before publication. Requires a new path.
@@ -846,6 +869,8 @@ function parseArguments(args) {
   if (args.includes("--ack-payload-bytes") && (args.includes("--help") || args.includes("--version"))) throw new Error("--ack-payload-bytes cannot be combined with --help or --version.");
   const options = { origin: "https://internet-quality-map.nf-93f.workers.dev", profile: "quick", networkType: "unknown", execution: "agent-host", publish: false, location: null };
   const values = /* @__PURE__ */ new Map([["--origin", "origin"], ["--profile", "profile"], ["--network-type", "networkType"], ["--execution", "execution"], ["--location", "location"], ["--cell-lat", "cellLat"], ["--cell-lon", "cellLon"], ["--output", "output"], ["--check-publication", "checkPublication"], ["--ack-payload-bytes", "ackPayloadBytes"]]);
+  values.set("--device-type", "deviceType");
+  values.set("--device-type-source", "deviceTypeSource");
   for (const flag of ["network-type-source", "internet-service", "internet-service-source", "wifi-standard", "wifi-standard-source", "wifi-band", "wifi-band-source"]) values.set("--" + flag, flag);
   const seen = /* @__PURE__ */ new Set();
   for (let index = 0; index < args.length; index++) {
@@ -877,6 +902,10 @@ function parseArguments(args) {
     options[key] = args[++index];
   }
   options.networkTypeExplicit = seen.has("--network-type");
+  if (options.deviceType !== void 0 || options.deviceTypeSource !== void 0) {
+    if (!Object.hasOwn(clientContextFields.device_type.values, options.deviceType) || !["user", "system"].includes(options.deviceTypeSource)) throw new Error("Supply a known --device-type and --device-type-source user|system.");
+    options.clientContext = { device_type: { value: options.deviceType, source: options.deviceTypeSource } };
+  }
   if (options.output !== void 0 && (!options.output.trim() || options.output.includes("\0"))) throw new Error("--output requires a nonempty file path.");
   if (options.networkInfo && [...seen].some((flag) => !["--network-info", "--no-network-detection"].includes(flag))) throw new Error("--network-info cannot be combined with test or publication options.");
   if (options.checkPublication !== void 0) {
@@ -943,6 +972,7 @@ function executionPlan(options) {
     payload_acknowledgement: { required_for_execution: options.profile === "extended-v1", flag: "--ack-payload-bytes", value: String(profile.max_download_bytes + profile.max_upload_bytes), supplied: options.ackPayloadBytes !== void 0 },
     timing_bounds: { measurement_ms: 3e4, os_before_ms: automatic ? 3500 : 0, os_after_ms: automatic ? 1800 : 0, publication_requests: options.publish ? 3 : 0, publication_request_ms: PUBLICATION_TIMEOUT_MS, end_to_end_ms: 3e4 + observation + publishing, excludes: "Process startup, filesystem work, and scheduling delays" },
     os_observation: { enabled: automatic, dns_hostname: automatic ? "speed.cloudflare.com" : null, raw_identifiers_in_output: false, provenance: "OS observations, not hardware attestation" },
+    client_context: { automatic: options.networkDetection !== false, fields: ["operating_system", "architecture", "runtime_version"], supplied: options.clientContext || null, device_type: "Only when explicitly supplied with its source" },
     output: { path: options.output ?? null, requires_new_path: Boolean(options.output), saved_before_publication: Boolean(options.output && options.publish) },
     publication: {
       requested: options.publish,
@@ -1047,7 +1077,7 @@ async function publishMeasurement(options, measurement, fetcher = fetch, onSessi
       headers: { "Content-Type": "application/json", Authorization: "Bearer " + session.token },
       signal: AbortSignal.timeout(PUBLICATION_TIMEOUT_MS),
       redirect: "error",
-      body: JSON.stringify({ consent: "public-map-v1", measurement, location, ...options.networkDetails ? { network_details: options.networkDetails } : {} })
+      body: JSON.stringify({ consent: "public-map-v1", measurement, location, ...options.networkDetails ? { network_details: options.networkDetails } : {}, ...options.clientContext ? { client_context: options.clientContext } : {} })
     });
   } catch {
   }
@@ -1081,6 +1111,16 @@ async function publishMeasurement(options, measurement, fetcher = fetch, onSessi
 function assertSupportedRuntime(version) {
   if (Number(version.split(".")[0]) < 24) throw new Error("Node.js 24 or later is required. No test was started.");
 }
+function nodeClientContext(options, { platform = process.platform, arch = process.arch, version = process.versions.node } = {}) {
+  const context = { ...options.clientContext };
+  if (options.networkDetection !== false) {
+    const system = { darwin: "macos", win32: "windows", linux: "linux", android: "android", freebsd: "freebsd" }[platform];
+    if (system) context.operating_system = { value: system, source: "system" };
+    if (Object.hasOwn(clientContextFields.architecture.values, arch)) context.architecture = { value: arch, source: "system" };
+    if (/^\d{1,3}\.\d{1,3}\.\d{1,3}$/.test(version)) context.runtime_version = { value: version, source: "system" };
+  }
+  return Object.keys(context).length ? context : void 0;
+}
 async function main(args = process.argv.slice(2), { measure = runTest, fetcher = fetch, observe, write = (value) => process.stdout.write(value) } = {}) {
   const options = parseArguments(args);
   if (options.help) {
@@ -1102,6 +1142,7 @@ async function main(args = process.argv.slice(2), { measure = runTest, fetcher =
     if (checked.status !== "confirmed") process.exitCode = 2;
     return;
   }
+  options.clientContext = nodeClientContext(options);
   const artifact = options.output ? await reserveOutput(options.output) : null;
   try {
     const controller = new AbortController();
@@ -1112,7 +1153,7 @@ async function main(args = process.argv.slice(2), { measure = runTest, fetcher =
     try {
       const resolved = await withNetworkContext(options, (context) => measure({ profile: options.profile, runtime: "node", execution: options.execution, networkType: context.networkType, signal: controller.signal }), { observe, signal: controller.signal });
       if (options.networkInfo) {
-        write(JSON.stringify(resolved, null, 2) + "\n");
+        write(JSON.stringify({ ...resolved, ...options.clientContext ? { client_context: options.clientContext } : {} }, null, 2) + "\n");
         return;
       }
       measurement = resolved.measurement;
@@ -1121,7 +1162,7 @@ async function main(args = process.argv.slice(2), { measure = runTest, fetcher =
       process.removeListener("SIGINT", stop);
       process.removeListener("SIGTERM", stop);
     }
-    const output = { schema_version: OUTPUT_SCHEMA_VERSION, client_version: CLIENT_VERSION, method: METHOD, profile: measurement.profile, load_evidence: loadEvidence(measurement), measurement, ...options.networkDetails ? { network_details: options.networkDetails } : {}, metrics: summarizeMeasurement(measurement), quality: measurementQuality(measurement), published: options.publish ? null : false, publication: { status: options.publish ? "pending" : "private" } };
+    const output = { schema_version: OUTPUT_SCHEMA_VERSION, client_version: CLIENT_VERSION, method: METHOD, profile: measurement.profile, load_evidence: loadEvidence(measurement), measurement, ...options.networkDetails ? { network_details: options.networkDetails } : {}, ...options.clientContext ? { client_context: options.clientContext } : {}, metrics: summarizeMeasurement(measurement), quality: measurementQuality(measurement), published: options.publish ? null : false, publication: { status: options.publish ? "pending" : "private" } };
     output.interpretation = interpretConnection(output);
     await artifact?.save(output);
     if (options.publish) {
@@ -1164,6 +1205,7 @@ export {
   checkPublication,
   executionPlan,
   main,
+  nodeClientContext,
   parseArguments,
   publishMeasurement
 };

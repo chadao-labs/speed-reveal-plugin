@@ -1,0 +1,104 @@
+{
+  "schema_version": "iqm-release-trust-v1",
+  "client_version": "0.7.0",
+  "source": {
+    "revision": "fb1ee9db144313a5a6aa8a8ecf0e867528f3e79f",
+    "state": "clean"
+  },
+  "build": {
+    "node": "24.19.0",
+    "esbuild": "0.28.2",
+    "lockfile_sha256": "ac925defd07e6965618936dd2da24c9489b5d00afda26ba7a2a22a83f9509b29"
+  },
+  "artifacts": {
+    "client": {
+      "path": "/client.mjs",
+      "sha256": "4acb2a92f342a5250be465a71cbc09444e20b574ece72cc780b99e765e246dbf"
+    },
+    "archive": {
+      "path": "/plugins/internet-quality-map-0.7.0.zip",
+      "sha256": "436612bf320bd970f21ec6dc552a644786dc04cd85e3df81bdfaa0a0a229d83c",
+      "bytes": 87961
+    }
+  },
+  "runtime": {
+    "minimum_node_major": 24,
+    "external_npm_modules": [],
+    "builtin_imports": [
+      "node:child_process",
+      "node:crypto",
+      "node:fs",
+      "node:fs/promises",
+      "node:path",
+      "node:url"
+    ],
+    "authored_inputs": [
+      {
+        "path": "packages/http-measurement/engine.js",
+        "sha256": "b7811f742f70609778b248ff7285dcffbff6c961942d8136f082edd0f6b9df3f"
+      },
+      {
+        "path": "packages/http-measurement/index.js",
+        "sha256": "3541d1257cc3fd98adc1847ca8d32d82985db11e47b2aa64760ac99094ea430c"
+      },
+      {
+        "path": "packages/http-measurement/profiles.js",
+        "sha256": "48fa7ffdea388adab8d36394dd400598e5a99711d2f0f6822d1db10eeb4cc965"
+      },
+      {
+        "path": "packages/http-measurement/summary.js",
+        "sha256": "71bc02283f69f8231516c7ad90b4486968ab8e370c0620b69dab6f3b0f99a0b8"
+      },
+      {
+        "path": "plugin.json",
+        "sha256": "4ccb2c4cbc95641609f92fb3f14fedcf210069945c13f6e6944753ecf1b5f108"
+      },
+      {
+        "path": "src/client/agent.mjs",
+        "sha256": "efd684c7a78d9c0ebfbf41c15e0c9a4c653049cc545772cf83c8a55cdf4a233e"
+      },
+      {
+        "path": "src/client/client-output.mjs",
+        "sha256": "160589ebfea65bf481aa01885d9a0038d21dabe706df46d2ec86b788da62fae3"
+      },
+      {
+        "path": "src/client/host-network.mjs",
+        "sha256": "48178c6cf8d6223e4a37d0508b87ad2434a5e8011dc8c3474af28572a156eeb2"
+      },
+      {
+        "path": "src/domain/client-context.js",
+        "sha256": "1382e2a0eb2f167a726683e8833f05b96d51fa8e5d124912dcef052b68bea4f3"
+      },
+      {
+        "path": "src/domain/interpretation.js",
+        "sha256": "c123064945b2224f3b5272b04e7ac38166d2f5a7e4b81c8efbea04153a589d2c"
+      },
+      {
+        "path": "src/domain/network-details.js",
+        "sha256": "c96cf0e29b340f5362ff92898940371348ff5500f6f00f3648a1c32bb5a1a7de"
+      },
+      {
+        "path": "src/domain/responsiveness.js",
+        "sha256": "e5c74c5d06abfb168cd423265a0edde7eeff8abc46fedd9b3872f2b898ed9af4"
+      }
+    ]
+  },
+  "permissions": {
+    "network": [
+      "HTTPS requests to speed.cloudflare.com for tests",
+      "DNS lookup for route observation",
+      "HTTPS requests to the selected IQM origin for publication or status checks"
+    ],
+    "filesystem": [
+      "Read OS route and host facts",
+      "Create a new private output file only when --output is supplied"
+    ],
+    "subprocess": "Fixed OS utilities without a shell, no elevation; --no-network-detection disables observation.",
+    "installation": "No install scripts, automatic updates, hooks or background services."
+  },
+  "limits": [
+    "A same-origin checksum does not authenticate the publisher independently.",
+    "This build record is generated evidence, not a signed supply-chain attestation.",
+    "A normal Node process has the permissions of its user."
+  ]
+}

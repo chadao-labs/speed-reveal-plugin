@@ -23,6 +23,14 @@ node scripts/client.mjs --network-info
 
 The client detects only facts the OS can establish about the active link. Restricted or unsupported hosts can return unknowns. A Wi-Fi link does not establish whether its router uses fibre, LTE, or 5G. Do not infer a service from an ASN, speed, VPN exit, virtual adapter, or hardware capability. Do not collect SSIDs, BSSIDs, IPs, MAC addresses, or hostnames as report metadata. Leave unverifiable fields absent. Explicit user facts can be supplied with their matching `--FIELD-source user` option. `--no-network-detection` disables OS detection.
 
+## Retain useful execution-host context
+
+The client automatically includes coarse `client_context`: operating system, runtime architecture and Node.js version. `--network-info` shows that context alongside available link and radio observations. Keep these facts in the final result and artifact. `--no-network-detection` disables automatic client context as well as link detection.
+
+Before an authorized run, enrich the record with every relevant fact you can establish on that execution host. If device type is known, append `--device-type computer|phone|tablet|server|router|other --device-type-source user|system`. If the upstream service is known, use `--internet-service VALUE --internet-service-source user|system`. Keep existing `--network-type`, Wi-Fi standard and band flags with their evidence. Do not turn missing context into a questionnaire for the user; use existing user statements and bounded OS observations, and leave anything else unknown.
+
+Each field retains its own source. Do not infer a server from Linux, a physical link from a virtual adapter, or an Internet service from an ASN, speed or browser effectiveType. A cloud execution host is not the user's device. Public consent must cover client context and network details in addition to the measurements, ASN hint, UTC day and selected area. No raw user-agent, model, serial, SSID, hostname, IP or arbitrary notes belong in this context.
+
 ## Run a test within consent
 
 Skill discovery is permission to read these instructions. It does not authorize a load test or public contribution. Before running, establish the host, data budget, temporary connection load, and sharing choice with the user. An explicit request to test this connection authorizes the bounded quick test within that scope. A general question about agent efficiency does not.
@@ -72,4 +80,4 @@ Every supplied acknowledgement must exactly match the selected profile total as 
 
 Read `profile`, `metrics`, `quality`, and both directions of `load_evidence` together. Directional `bytes`, `elapsed_ms`, and `termination` come from raw phases. Download bytes are consumed payload; upload bytes are successfully credited payload, not total attempted payload or total data used. Failed uploads may have sent data. Planned ceilings are separate. Historical missing evidence is unknown and must never be reconstructed as zero or complete coverage. Zero payload, sparse probes, caps, early endings, and failures limit coverage. Missing profile, quality, counts, or directional evidence prevents a reassuring result. Keep observed long timings and failures visible with those limits.
 
-OpenAPI 1.2.0 adds the immutable profile enum and optional public evidence. Strict older readers need an upgrade for new fields and mixed-profile capabilities or map responses. Old requests, tokens and identical retries remain valid. A rejected or uncertain publication keeps its saved observation and result ID; it never authorizes remeasurement.
+OpenAPI 1.3.0 adds optional sourced client_context alongside the immutable profile enum and optional public evidence. Strict older readers need an upgrade for new fields and mixed-profile capabilities or map responses. Old requests, tokens and identical retries remain valid. A rejected or uncertain publication keeps its saved observation and result ID; it never authorizes remeasurement.
