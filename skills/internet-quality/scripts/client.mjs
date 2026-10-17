@@ -248,8 +248,11 @@ var METHOD = "iqm-http-v1";
 var MiB = 1024 * 1024;
 var PROFILES = Object.freeze({
   quick: Object.freeze({ baseline_ms: 2e3, load_ms: 5e3, max_download_bytes: 32 * MiB, max_upload_bytes: 8 * MiB }),
-  standard: Object.freeze({ baseline_ms: 3e3, load_ms: 8e3, max_download_bytes: 128 * MiB, max_upload_bytes: 32 * MiB })
+  standard: Object.freeze({ baseline_ms: 3e3, load_ms: 8e3, max_download_bytes: 128 * MiB, max_upload_bytes: 32 * MiB }),
+  "extended-v1": Object.freeze({ baseline_ms: 3e3, load_ms: 8e3, max_download_bytes: 1024 * MiB, max_upload_bytes: 1024 * MiB })
 });
+var PROFILE_IDS = Object.freeze(Object.keys(PROFILES));
+var MAX_TRANSFER_BYTES = Math.max(...Object.values(PROFILES).flatMap((profile) => [profile.max_download_bytes, profile.max_upload_bytes]));
 var SCHEDULE = Object.freeze({ probe_interval_ms: 250, request_timeout_ms: 3e3, overall_ms: 3e4 });
 var TEST_ENDPOINTS = Object.freeze({ download: "https://speed.cloudflare.com/__down", upload: "https://speed.cloudflare.com/__up" });
 var now = () => performance.now();
@@ -280,6 +283,13 @@ function summarizeMeasurement({ phases }) {
   const [idle, download, upload] = phases;
   const throughput2 = ({ transfer }) => transfer && transfer.bytes > 0 && transfer.elapsed_ms > 0 ? transfer.bytes * 8 / transfer.elapsed_ms / 1e3 : null;
   return { download_mbps: throughput2(download), upload_mbps: throughput2(upload), idle: summarizePhase(idle), download: summarizePhase(download), upload: summarizePhase(upload) };
+}
+function loadEvidence({ phases }) {
+  return Object.fromEntries(phases.filter((phase) => phase.phase !== "idle").map(({ phase, transfer }) => [phase, {
+    bytes: transfer.bytes,
+    elapsed_ms: transfer.elapsed_ms,
+    termination: transfer.termination
+  }]));
 }
 function measurementQuality(measurement) {
   const transfers = measurement.phases.filter((phase) => phase.transfer).map((phase) => phase.transfer);
@@ -520,7 +530,7 @@ async function runTestWithTiming({ profile = "quick", runtime, execution, networ
 var plugin_default = {
   $schema: "https://agent-plugins.org/schemas/1.0.0/plugin.schema.json",
   name: "internet-quality-map",
-  version: "0.3.1",
+  version: "0.4.0",
   description: "Measure Internet responsiveness for agentic workflows and read community connection reports.",
   homepage: "https://internet-quality-map.nf-93f.workers.dev/",
   keywords: ["internet", "latency", "agent", "connectivity"],
@@ -544,34 +554,74 @@ var plugin_default = {
 
 // public/responsiveness.js
 var phaseNames = ["idle", "download", "upload"];
+var directions = ["download", "upload"];
+var sampleFloors = { idle: 4, download: 8, upload: 8 };
 var finite = (value) => Number.isFinite(value) && value >= 0 ? value : null;
-function responsiveness({ metrics, quality }) {
+var count = (value) => Number.isSafeInteger(value) && value >= 0 ? value : null;
+var probeCount = (value) => count(value) !== null && value <= 128 ? value : null;
+var coverageReasonText = Object.freeze({
+  "byte-cap": "A transfer reached its data budget. Short capped transfers do not establish a speed floor or sustained responsiveness.",
+  "short-load": "A load phase ended before its planned duration.",
+  "request-failures": "Some HTTP requests failed. Successful timing summaries exclude failures. HTTP request failures are not packet loss.",
+  "sparse-samples": "There were fewer than four successful baseline probes or eight in a loaded phase. These are editorial completeness checks, not confidence intervals.",
+  "zero-load": "At least one direction recorded zero payload bytes. Successful probes alone cannot establish loaded coverage.",
+  "missing-quality": "Quality information is missing or invalid, so unreported transfer limits remain unknown.",
+  "missing-counts": "Some probe counts are missing, invalid, or inconsistent. They cannot establish complete sampling.",
+  "missing-timing": "At least one phase has no usable successful p95 timing. Comparisons involving that phase are unavailable.",
+  "missing-profile": "The immutable test profile is missing or unknown, so the planned load duration and allowance are unknown.",
+  "missing-load-evidence": "Directional payload, elapsed time, or termination evidence is missing or invalid. Historical missing facts remain unknown."
+});
+function responsiveness(input = {}) {
+  const { metrics, quality, load_evidence: evidence, profile: profileId } = input ?? {};
+  const profile = typeof profileId === "string" && Object.hasOwn(PROFILES, profileId) ? PROFILES[profileId] : null;
   const phases = Object.fromEntries(phaseNames.map((name) => {
-    const phase = metrics?.[name] || {};
-    const received = finite(phase.received);
+    const phase = metrics?.[name];
+    const sent = probeCount(phase?.sent);
+    let received = probeCount(phase?.received);
+    const failed = probeCount(phase?.failed);
+    const inconsistent = sent !== null && (received !== null && received > sent || failed !== null && failed > sent || received !== null && failed !== null && received + failed !== sent);
+    if (inconsistent) received = null;
     return [name, {
-      p95_ms: received > 0 ? finite(phase.p95_ms) : null,
-      median_ms: received > 0 ? finite(phase.median_ms) : null,
-      jitter_ms: received > 1 ? finite(phase.jitter_ms) : null,
-      sent: finite(phase.sent),
+      p95_ms: received > 0 ? finite(phase?.p95_ms) : null,
+      median_ms: received > 0 ? finite(phase?.median_ms) : null,
+      jitter_ms: received > 1 ? finite(phase?.jitter_ms) : null,
+      sent,
       received,
-      failed: finite(phase.failed)
+      failed
     }];
   }));
-  const hasFailures = phaseNames.some((name) => phases[name].failed > 0) || quality?.failed_requests > 0;
-  const limited = quality?.byte_capped || quality?.short_load || hasFailures;
-  const knownQuality = quality?.byte_capped === false && quality?.short_load === false && quality?.failed_requests === 0;
-  const sampled = phaseNames.every((name) => phases[name].sent > 0 && phases[name].received > 0);
-  const coverage = limited ? "limited" : knownQuality && sampled ? "complete" : "unknown";
+  const transfers = directions.map((name) => evidence?.[name]);
+  const totalFailed = count(quality?.failed_requests);
+  const failures = totalFailed > 0 || phaseNames.some((name) => phases[name].failed > 0);
+  const validEvidence = directions.every((name) => {
+    const transfer = evidence?.[name];
+    return transfer && count(transfer.bytes) !== null && transfer.bytes <= (profile?.[`max_${name}_bytes`] ?? MAX_TRANSFER_BYTES) && finite(transfer.elapsed_ms) !== null && transfer.elapsed_ms > 0 && transfer.elapsed_ms <= 3e4 && ["time_limit", "byte_limit"].includes(transfer.termination);
+  });
+  const conditions = {
+    "byte-cap": quality?.byte_capped === true || transfers.some((transfer) => transfer?.termination === "byte_limit"),
+    "short-load": quality?.short_load === true || Boolean(profile && transfers.some((transfer) => finite(transfer?.elapsed_ms) !== null && transfer.elapsed_ms < profile.load_ms * 0.8)),
+    "request-failures": failures,
+    "sparse-samples": phaseNames.some((name) => phases[name].received !== null && phases[name].received < sampleFloors[name]),
+    "zero-load": transfers.some((transfer) => transfer?.bytes === 0),
+    "missing-quality": typeof quality?.byte_capped !== "boolean" || typeof quality?.short_load !== "boolean" || totalFailed === null,
+    "missing-counts": phaseNames.some((name) => ["sent", "received", "failed"].some((key) => phases[name][key] === null)),
+    "missing-timing": phaseNames.some((name) => phases[name].p95_ms === null),
+    "missing-profile": !profile,
+    "missing-load-evidence": !validEvidence
+  };
+  const reasons = Object.keys(coverageReasonText).filter((reason) => conditions[reason]);
+  const knownLimit = ["byte-cap", "short-load", "request-failures", "sparse-samples", "zero-load"].some((reason) => conditions[reason]) || phaseNames.some((name) => phases[name].received !== null && phases[name].p95_ms === null);
+  const coverage = knownLimit ? "limited" : reasons.length ? "unknown" : "complete";
   const { download, upload } = phases;
   return {
     ...phases,
     coverage,
+    coverage_reasons: reasons,
     higher_loaded_p95_ms: download.p95_ms !== null && upload.p95_ms !== null ? Math.max(download.p95_ms, upload.p95_ms) : null
   };
 }
 var latency = (label, phase, field, bands = [30, 80, 150]) => ({ label, unit: "ms", higherIsBetter: false, bands, value: (_result, view) => view[phase][field] });
-var throughput = (label, field) => ({ label, unit: "Mbps", higherIsBetter: true, bands: [10, 50, 100], value: (result) => finite(result.metrics?.[field]) });
+var throughput = (label, field) => ({ label, unit: "Mbps", higherIsBetter: true, bands: [10, 50, 100], value: (result) => finite(result?.metrics?.[field]) });
 var metricDefinitions = Object.freeze({
   higher_loaded_p95_ms: { label: "Higher loaded HTTP p95, download/upload", unit: "ms", higherIsBetter: false, bands: [30, 80, 150], value: (_result, view) => view.higher_loaded_p95_ms },
   download_p95_ms: latency("Download-loaded HTTP p95", "download", "p95_ms"),
@@ -588,31 +638,14 @@ var metricDefinitions = Object.freeze({
 });
 
 // public/interpretation.js
-var VERSION = "iqm-interpretation-v1";
+var VERSION = "iqm-interpretation-v2";
 var ABSOLUTE_CUE_MS = 250;
 var INCREASE_CUE_MS = 100;
 var phaseNames2 = ["idle", "download", "upload"];
-var sampleFloors = { idle: 4, download: 8, upload: 8 };
 var phaseLabels = { idle: "Baseline", download: "Download", upload: "Upload" };
-var count = (value) => Number.isSafeInteger(value) && value >= 0 ? value : null;
+var count2 = (value) => Number.isSafeInteger(value) && value >= 0 ? value : null;
 var timing = (value) => Number.isFinite(value) && value >= 0 ? value : null;
 var milliseconds = (value) => Math.round(value * 10) / 10;
-var reasonText = {
-  "byte-cap": "A transfer reached its data budget. A capped transfer does not establish sustained speed or responsiveness.",
-  "short-load": "A load phase ended before its planned duration.",
-  "request-failures": "Some HTTP requests failed. Successful timing summaries exclude failures. HTTP request failures are not packet loss.",
-  "sparse-samples": "There were fewer than four successful baseline probes or eight in a loaded phase. These are editorial completeness checks, not confidence intervals.",
-  "missing-quality": "Quality information is missing or invalid, so unreported transfer limits remain unknown.",
-  "missing-counts": "Some probe counts are missing, invalid, or inconsistent. They cannot establish complete sampling.",
-  "missing-timing": "At least one phase has no usable successful p95 timing. Comparisons involving that phase are unavailable."
-};
-function normalizePhase(phase = {}) {
-  const sent = count(phase?.sent);
-  const received = count(phase?.received);
-  const failed = count(phase?.failed);
-  const inconsistent = sent !== null && (received !== null && received > sent || failed !== null && failed > sent || received !== null && failed !== null && received + failed !== sent);
-  return { ...phase, sent, received: inconsistent ? null : received, failed };
-}
 function observationText(observation, findings, phases, reasons) {
   const increases = findings.filter((finding) => finding.kind === "p95-increase");
   const long = findings.filter((finding) => finding.kind === "long-p95");
@@ -639,11 +672,12 @@ function observationText(observation, findings, phases, reasons) {
     action: { title: "Run another test.", reason: "A completed attempt with successful probes and counts is needed for timing comparisons." }
   };
   if (observation === "limited-observation") {
-    const missing = reasons.some((reason) => ["missing-quality", "missing-counts", "missing-timing"].includes(reason));
+    const missing = reasons.some((reason) => ["missing-quality", "missing-counts", "missing-timing", "missing-profile", "missing-load-evidence"].includes(reason));
+    const zeroLoad = reasons.includes("zero-load");
     return {
-      headline: missing ? "This reading lacks enough information for comparison." : "Too brief to judge a busy connection.",
-      description: missing ? "The available replies did not show a large delay, but missing information prevents a complete comparison." : "The available replies did not show a large delay. The test was too limited to judge sustained behavior during transfers.",
-      action: { title: "Repeat with a fuller observation.", reason: "Use the standard test and compare the phase counts and transfer limits alongside the timings." }
+      headline: missing ? "This reading lacks enough information for comparison." : zeroLoad ? "A transfer has no recorded payload." : "Too brief to judge a busy connection.",
+      description: missing ? "The available replies did not show a large delay, but missing information prevents a complete comparison." : zeroLoad ? "At least one load phase recorded zero consumed download or credited upload payload bytes. Successful probes alone cannot establish loaded coverage." : "The available replies did not show a large delay. The test was too limited to judge sustained behavior during transfers.",
+      action: { title: "Review the coverage details.", reason: "Compare phase counts, recorded payload, elapsed times, and transfer limits. Choose a suitable allowance before any separately authorized bounded test." }
     };
   }
   return {
@@ -655,8 +689,7 @@ function observationText(observation, findings, phases, reasons) {
 function interpretConnection(input = {}) {
   const metrics = input?.metrics;
   const quality = input?.quality;
-  const normalized = Object.fromEntries(phaseNames2.map((name) => [name, normalizePhase(metrics?.[name])]));
-  const view = responsiveness({ metrics: normalized, quality });
+  const view = responsiveness(input);
   const phases = Object.fromEntries(phaseNames2.map((name) => {
     const phase = view[name];
     return [name, {
@@ -666,7 +699,7 @@ function interpretConnection(input = {}) {
     }];
   }));
   const phaseValues = Object.values(phases);
-  const totalFailed = count(quality?.failed_requests);
+  const totalFailed = count2(quality?.failed_requests);
   const probeFailed = phaseValues.every((phase) => phase.failed !== null) ? phaseValues.reduce((total, phase) => total + phase.failed, 0) : null;
   const failures = totalFailed > 0 || phaseValues.some((phase) => phase.failed > 0);
   const increases = phaseNames2.filter((name) => name !== "idle" && phases[name].increase_ms >= INCREASE_CUE_MS).map((phase) => ({ kind: "p95-increase", phase, value_ms: phases[phase].increase_ms })).sort((a, b) => b.value_ms - a.value_ms || phaseNames2.indexOf(a.phase) - phaseNames2.indexOf(b.phase));
@@ -676,24 +709,14 @@ function interpretConnection(input = {}) {
     ...increases,
     ...long
   ];
-  const conditions = {
-    "byte-cap": quality?.byte_capped === true,
-    "short-load": quality?.short_load === true,
-    "request-failures": failures,
-    "sparse-samples": phaseNames2.some((name) => phases[name].received !== null && phases[name].received < sampleFloors[name]),
-    "missing-quality": typeof quality?.byte_capped !== "boolean" || typeof quality?.short_load !== "boolean" || totalFailed === null,
-    "missing-counts": phaseValues.some((phase) => phase.sent === null || phase.received === null || phase.failed === null),
-    "missing-timing": phaseValues.some((phase) => phase.p95_ms === null)
-  };
-  const reasons = Object.keys(reasonText).filter((reason) => conditions[reason]);
-  const knownLimit = conditions["byte-cap"] || conditions["short-load"] || failures || conditions["sparse-samples"] || phaseNames2.some((name) => phases[name].p95_ms === null && (phases[name].received !== null || timing(metrics?.[name]?.p95_ms) === null));
-  const coverage = { state: knownLimit ? "limited" : reasons.length ? "unknown" : "no-reported-limits", reasons };
+  const reasons = view.coverage_reasons;
+  const coverage = { state: view.coverage === "complete" ? "no-reported-limits" : view.coverage, reasons };
   const observation = failures ? "failures-observed" : increases.length ? "increase-observed" : long.length ? "long-responses-observed" : phaseValues.every((phase) => phase.p95_ms === null) ? "unavailable" : reasons.length ? "limited-observation" : "no-marked-delay-observed";
   const qualifications = [
     "HTTP timings include the device, request handling, route, and Cloudflare endpoint. They do not measure model response time or coding productivity.",
     "Baseline means before this test traffic. Other applications may still use the connection.",
     "P95 is the nearest-rank 95th percentile of successful probe times. The 250 ms absolute cue and 100 ms increase cue are editorial prompts, not application performance guarantees.",
-    ...reasons.map((reason) => reasonText[reason]),
+    ...reasons.map((reason) => coverageReasonText[reason]),
     ...phaseNames2.filter((name) => phases[name].p95_is_max === true).map((name) => `${phaseLabels[name]} p95 is the largest successful timing because there were fewer than 20 successful probes.`),
     "HTTP throughput is the achieved transfer rate. This test does not prove network saturation or sustained performance."
   ];
@@ -774,14 +797,18 @@ var PUBLICATION_TIMEOUT_MS = 15e3;
 var help = `Internet Quality Map client
 
 Run a bounded HTTP speed test on this execution host. No reading is published by default.
-Test traffic goes to speed.cloudflare.com. Quick plans 40 MiB of payload and standard 160 MiB, plus protocol and probe overhead.
+Test traffic goes to speed.cloudflare.com. Quick plans 40 MiB of payload and standard 160 MiB. Extended allows up to 2 GiB total, 1 GiB per direction, plus protocol and probe overhead.
+Explicit authorization for that allowance is required separately from publication. The flag does not grant permission.
 HTTP latency includes the endpoint and application. It is not ICMP latency or packet loss.
 
 node client.mjs --origin https://internet-quality-map.nf-93f.workers.dev [options]
 
 --plan                               Explain a test offline. No OS commands, network requests, or file writes.
 --check-publication UUID             Check one public result without a test or file write.
---profile quick|standard             Default quick.
+--profile quick|standard|extended-v1 Default quick.
+--ack-payload-bytes INTEGER           Exact selected total. Extended execution requires 2147483648.
+                                     Plans need no acknowledgement; supplied values must match.
+                                     Cannot combine with --help or --version.
 --network-type wifi|cellular|wired|unknown  Explicit claim. Overrides automatic OS detection.
 --network-info                       Inspect safe OS facts, without a speed test.
 --no-network-detection               Disable automatic OS observation.
@@ -811,10 +838,14 @@ Leave unknown observations absent. Report the execution host, not the remote use
 System sources are submitter observations, not server verification. Never infer service from ASN, speed, effectiveType, or a virtual adapter.
 An IP-area hint can describe a VPN exit. Community measurements are client-reported.
 After publication this client prints the public result ID and link, never its publishing token.
+Output load_evidence records consumed download payload and successfully credited upload payload.
+Upload bytes are not total attempted payload or total data used; failed uploads may still send data.
+Elapsed duration does not prove saturation or full probe overlap with traffic.
 `;
 function parseArguments(args) {
+  if (args.includes("--ack-payload-bytes") && (args.includes("--help") || args.includes("--version"))) throw new Error("--ack-payload-bytes cannot be combined with --help or --version.");
   const options = { origin: "https://internet-quality-map.nf-93f.workers.dev", profile: "quick", networkType: "unknown", execution: "agent-host", publish: false, location: null };
-  const values = /* @__PURE__ */ new Map([["--origin", "origin"], ["--profile", "profile"], ["--network-type", "networkType"], ["--execution", "execution"], ["--location", "location"], ["--cell-lat", "cellLat"], ["--cell-lon", "cellLon"], ["--output", "output"], ["--check-publication", "checkPublication"]]);
+  const values = /* @__PURE__ */ new Map([["--origin", "origin"], ["--profile", "profile"], ["--network-type", "networkType"], ["--execution", "execution"], ["--location", "location"], ["--cell-lat", "cellLat"], ["--cell-lon", "cellLon"], ["--output", "output"], ["--check-publication", "checkPublication"], ["--ack-payload-bytes", "ackPayloadBytes"]]);
   for (const flag of ["network-type-source", "internet-service", "internet-service-source", "wifi-standard", "wifi-standard-source", "wifi-band", "wifi-band-source"]) values.set("--" + flag, flag);
   const seen = /* @__PURE__ */ new Set();
   for (let index = 0; index < args.length; index++) {
@@ -856,7 +887,10 @@ function parseArguments(args) {
   const loopback = ["localhost", "127.0.0.1", "[::1]"].includes(url.hostname);
   if (url.username || url.password || url.search || url.hash || url.pathname !== "/" || url.protocol !== "https:" && !(url.protocol === "http:" && loopback)) throw new Error("Origin must be an HTTPS origin, or loopback HTTP for local development.");
   options.origin = url.origin;
-  if (!Object.hasOwn(PROFILES, options.profile)) throw new Error("Profile must be quick or standard.");
+  if (!Object.hasOwn(PROFILES, options.profile)) throw new Error("Profile must be " + Object.keys(PROFILES).join(", ") + ".");
+  const totalBytes = PROFILES[options.profile].max_download_bytes + PROFILES[options.profile].max_upload_bytes;
+  if (options.ackPayloadBytes !== void 0 && options.ackPayloadBytes !== String(totalBytes)) throw new Error("--ack-payload-bytes must equal the canonical integer " + totalBytes + " for this profile.");
+  if (options.profile === "extended-v1" && !options.plan && options.ackPayloadBytes === void 0) throw new Error("Extended execution requires --ack-payload-bytes " + totalBytes + " and explicit authorization for this payload allowance.");
   if (!["wifi", "cellular", "wired", "unknown"].includes(options.networkType)) throw new Error("Invalid network type.");
   if (!["this-device", "agent-host"].includes(options.execution)) throw new Error("Invalid execution context.");
   if (options.location !== null && !["ip", "none"].includes(options.location)) throw new Error("Location must be ip or none.");
@@ -906,6 +940,7 @@ function executionPlan(options) {
     network_context: { network_type: options.networkType, ...options.networkDetails ? { network_details: options.networkDetails } : {} },
     endpoints: { probe: TEST_ENDPOINTS.download, ...TEST_ENDPOINTS },
     payload_budgets: { download_bytes: profile.max_download_bytes, upload_bytes: profile.max_upload_bytes, total_bytes: profile.max_download_bytes + profile.max_upload_bytes, excludes: "HTTP probe and protocol overhead" },
+    payload_acknowledgement: { required_for_execution: options.profile === "extended-v1", flag: "--ack-payload-bytes", value: String(profile.max_download_bytes + profile.max_upload_bytes), supplied: options.ackPayloadBytes !== void 0 },
     timing_bounds: { measurement_ms: 3e4, os_before_ms: automatic ? 3500 : 0, os_after_ms: automatic ? 1800 : 0, publication_requests: options.publish ? 3 : 0, publication_request_ms: PUBLICATION_TIMEOUT_MS, end_to_end_ms: 3e4 + observation + publishing, excludes: "Process startup, filesystem work, and scheduling delays" },
     os_observation: { enabled: automatic, dns_hostname: automatic ? "speed.cloudflare.com" : null, raw_identifiers_in_output: false, provenance: "OS observations, not hardware attestation" },
     output: { path: options.output ?? null, requires_new_path: Boolean(options.output), saved_before_publication: Boolean(options.output && options.publish) },
@@ -1086,7 +1121,7 @@ async function main(args = process.argv.slice(2), { measure = runTest, fetcher =
       process.removeListener("SIGINT", stop);
       process.removeListener("SIGTERM", stop);
     }
-    const output = { schema_version: OUTPUT_SCHEMA_VERSION, client_version: CLIENT_VERSION, method: METHOD, measurement, ...options.networkDetails ? { network_details: options.networkDetails } : {}, metrics: summarizeMeasurement(measurement), quality: measurementQuality(measurement), published: options.publish ? null : false, publication: { status: options.publish ? "pending" : "private" } };
+    const output = { schema_version: OUTPUT_SCHEMA_VERSION, client_version: CLIENT_VERSION, method: METHOD, profile: measurement.profile, load_evidence: loadEvidence(measurement), measurement, ...options.networkDetails ? { network_details: options.networkDetails } : {}, metrics: summarizeMeasurement(measurement), quality: measurementQuality(measurement), published: options.publish ? null : false, publication: { status: options.publish ? "pending" : "private" } };
     output.interpretation = interpretConnection(output);
     await artifact?.save(output);
     if (options.publish) {

@@ -17,3 +17,5 @@ This archive is a distribution artifact. It is not proof of installation, market
 Release 0.3.0 adds `--plan` for an offline permission and traffic inventory and `--check-publication UUID` for a read-only status check. Reconciliation does not run another measurement or change a result file. The website links a versioned build and permission record alongside each release. See the skill and public trust page before execution.
 
 Release 0.3.1 also bounds probe and upload reply bodies to 64 KiB. An oversized reply stops the measurement with an error. It is not reported as a finding about the connection.
+
+Client 0.4.0 adds the optional Extended profile, up to 2 GiB payload total, with an exact `--ack-payload-bytes 2147483648` execution requirement. Quick remains the default. Explicit authorization for that larger allowance is separate from publication consent. The shared interpretation v2 requires positive directional transfer evidence and consistent sampling before reporting no coverage limits. Historical absent evidence remains unknown. See the skill for offline plans and safe recovery.
