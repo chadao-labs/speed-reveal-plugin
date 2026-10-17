@@ -1,10 +1,15 @@
 {
   "$schema": "https://agent-plugins.org/schemas/1.0.0/plugin.schema.json",
   "name": "internet-quality-map",
-  "version": "0.4.0",
+  "version": "0.7.0",
   "description": "Measure Internet responsiveness for agentic workflows and read community connection reports.",
   "homepage": "https://internet-quality-map.nf-93f.workers.dev/",
-  "keywords": ["internet", "latency", "agent", "connectivity"],
+  "keywords": [
+    "internet",
+    "latency",
+    "agent",
+    "connectivity"
+  ],
   "extensions": {
     "com.openai": {
       "requires_local_executor": true,
@@ -13,7 +18,10 @@
         "shortDescription": "Test agent connectivity",
         "longDescription": "Read community reports, run a bounded connection test, and contribute a coarse-area result with consent.",
         "category": "Developer Tools",
-        "capabilities": ["Read", "Write"],
+        "capabilities": [
+          "Read",
+          "Write"
+        ],
         "websiteURL": "https://internet-quality-map.nf-93f.workers.dev/",
         "privacyPolicyURL": "https://internet-quality-map.nf-93f.workers.dev/privacy",
         "composerIcon": "./assets/icon.svg",

@@ -19,3 +19,5 @@ Release 0.3.0 adds `--plan` for an offline permission and traffic inventory and 
 Release 0.3.1 also bounds probe and upload reply bodies to 64 KiB. An oversized reply stops the measurement with an error. It is not reported as a finding about the connection.
 
 Client 0.4.0 adds the optional Extended profile, up to 2 GiB payload total, with an exact `--ack-payload-bytes 2147483648` execution requirement. Quick remains the default. Explicit authorization for that larger allowance is separate from publication consent. The shared interpretation v2 requires positive directional transfer evidence and consistent sampling before reporting no coverage limits. Historical absent evidence remains unknown. See the skill for offline plans and safe recovery.
+
+Client 0.7.0 is the draft for immediate results, optional location and on-demand map loading, retaining sourced client context. It retains the measurement and output contracts while building from the independent public application and shared HTTP library. Public release approval remains separate from this draft package.

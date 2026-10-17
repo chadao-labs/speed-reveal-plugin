@@ -1,7 +1,9 @@
 name: Verify standalone package
 on:
   push:
+    branches: ['**']
   pull_request:
+  workflow_call:
 permissions:
   contents: read
 jobs:
@@ -24,3 +26,7 @@ jobs:
           package-manager-cache: false
       - name: Verify checksums and offline CLI
         run: node scripts/verify-package.mjs
+      - name: Reproduce the hash-pinned release archive
+        run: node scripts/build-release.mjs "${{ runner.temp }}/iqm-release"
+      - name: Verify release rejection boundaries
+        run: node --test scripts/build-release.test.mjs
