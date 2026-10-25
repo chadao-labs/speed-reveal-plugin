@@ -1,43 +1,11 @@
 import assert from 'node:assert/strict';
-import { createHash } from 'node:crypto';
-import { lstat, mkdir, readFile, writeFile } from 'node:fs/promises';
+import { mkdir, writeFile } from 'node:fs/promises';
 import { resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
-
-// Store-only ZIP with fixed metadata, matching the reviewed package exporter.
-// Only these seven distributed files can enter a release archive.
-const names = ['plugin.json', 'README.md', 'assets/icon.svg', 'skills/internet-quality/SKILL.md',
-  'skills/internet-quality/agents/openai.yaml', 'skills/internet-quality/scripts/client.mjs', 'SHA256SUMS'];
+import { readPackage, sha256 } from './package-record.mjs';
 const root = fileURLToPath(new URL('../', import.meta.url));
-const sha256 = data => createHash('sha256').update(data).digest('hex');
-const manifest = JSON.parse(await readFile(resolve(root, 'plugin.json'), 'utf8'));
-assert.match(manifest.version, /^\d+\.\d+\.\d+$/);
-assert.equal(manifest.name, 'internet-quality-map');
 assert.equal(process.argv.length, 3, 'Usage: node scripts/build-release.mjs NEW_OUTPUT_DIRECTORY');
-const entries = new Map();
-for (const name of names) {
-  assert.equal((await lstat(resolve(root, name))).isFile(), true, name);
-  entries.set(name, await readFile(resolve(root, name)));
-}
-const ordered = [...entries].sort(([a], [b]) => a.localeCompare(b, 'en'));
-const checksums = ordered.filter(([name]) => name !== 'SHA256SUMS').map(([name, data]) => `${sha256(data)}  ${name}\n`).join('');
-assert.equal(entries.get('SHA256SUMS').toString(), checksums, 'Package checksums differ');
-const base = `internet-quality-map-${manifest.version}`;
-const recordRoot = resolve(root, 'releases', manifest.version);
-const metadataBytes = await readFile(resolve(recordRoot, 'release.json'));
-const trustBytes = await readFile(resolve(recordRoot, base + '.trust.json'));
-const checksumBytes = await readFile(resolve(recordRoot, base + '.zip.sha256'));
-const metadata = JSON.parse(metadataBytes), trust = JSON.parse(trustBytes);
-assert.equal(metadata.version, manifest.version);
-assert.equal(metadata.files, entries.size);
-assert.equal(metadata.filename, base + '.zip');
-assert.equal(metadata.trust_filename, base + '.trust.json');
-assert.equal(metadata.client_sha256, sha256(entries.get('skills/internet-quality/scripts/client.mjs')));
-assert.equal(trust.source.state, 'clean');
-assert.match(trust.source.revision, /^[a-f0-9]{40}$/);
-assert.equal(trust.client_version, manifest.version);
-assert.equal(trust.artifacts.client.sha256, metadata.client_sha256);
-assert.deepEqual(trust.artifacts.archive, { path: '/plugins/' + metadata.filename, sha256: metadata.sha256, bytes: metadata.bytes });
+const { manifest, entries, ordered, metadata, metadataBytes, trustBytes, checksumBytes } = await readPackage(root);
 
 function crc32(bytes) {
   let value = 0xffffffff;
