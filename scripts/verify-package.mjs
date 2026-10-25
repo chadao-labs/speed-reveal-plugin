@@ -1,6 +1,6 @@
+import { readPackage } from './package-record.mjs';
 import assert from 'node:assert/strict';
-import { createHash } from 'node:crypto';
-import { readFile, access, mkdtemp, writeFile, rm } from 'node:fs/promises';
+import { access, mkdtemp, writeFile, rm } from 'node:fs/promises';
 import { spawnSync } from 'node:child_process';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -8,26 +8,21 @@ import { fileURLToPath, pathToFileURL } from 'node:url';
 
 assert.ok(Number(process.versions.node.split('.')[0]) >= 24, 'Node.js 24 or later is required');
 const root = fileURLToPath(new URL('../', import.meta.url));
-const expected = ['README.md', 'assets/icon.svg', 'plugin.json', 'skills/internet-quality/SKILL.md', 'skills/internet-quality/agents/openai.yaml', 'skills/internet-quality/scripts/client.mjs'];
-const entries = (await readFile(join(root, 'SHA256SUMS'), 'utf8')).trim().split('\n').map(line => {
-  const match = /^([a-f0-9]{64})  (.+)$/.exec(line);
-  assert.ok(match, 'Malformed checksum entry');
-  return { digest: match[1], name: match[2] };
-});
-assert.deepEqual(entries.map(entry => entry.name).sort(), [...expected].sort());
-for (const { digest, name } of entries) {
-  assert.equal(createHash('sha256').update(await readFile(join(root, name))).digest('hex'), digest, name);
-}
-
-const manifest = JSON.parse(await readFile(join(root, 'plugin.json'), 'utf8'));
+const { manifest, entries, paired } = await readPackage(root);
 const client = join(root, 'skills/internet-quality/scripts/client.mjs');
 const temporary = await mkdtemp(join(tmpdir(), 'iqm verification '));
 try {
   const preload = join(temporary, 'forbid-effects.mjs');
   await writeFile(preload, `import cp from 'node:child_process';
+import fs from 'node:fs';
+import fsp from 'node:fs/promises';
+import net from 'node:net';
+import http from 'node:http';
+import https from 'node:https';
+import dgram from 'node:dgram';
 import dns from 'node:dns';
 import dnsPromises from 'node:dns/promises';
-import { syncBuiltinESMExports } from 'node:module';
+import { syncBuiltinESMExports, registerHooks } from 'node:module';
 const forbidden = () => {
   process.stderr.write('Unexpected network or OS effect\\n');
   process.exit(97);
@@ -38,6 +33,26 @@ for (const target of [dns, dnsPromises, dns.Resolver.prototype, dnsPromises.Reso
     if (/^(lookup|resolve)|^reverse$/.test(name) && typeof target[name] === 'function') target[name] = forbidden;
   }
 }
+for (const target of [fs, fsp]) for (const name of ['writeFile','appendFile','mkdir','mkdtemp','rename','unlink','rm','rmdir','copyFile','cp','truncate','chmod','chown','symlink','link','createWriteStream']) {
+  if (typeof target[name] === 'function') target[name] = forbidden;
+  if (typeof target[name + 'Sync'] === 'function') target[name + 'Sync'] = forbidden;
+}
+for (const target of [fs, fsp]) for (const name of ['open','openSync']) {
+  if (typeof target[name] !== 'function') continue;
+  const original = target[name];
+  target[name] = (path, flags, ...args) => {
+    if (flags !== 'r' && flags !== 'rs' && flags !== 0) return forbidden();
+    return original.call(target, path, flags, ...args);
+  };
+}
+net.connect = net.createConnection = net.createServer = forbidden;
+net.Socket.prototype.connect = net.Server.prototype.listen = forbidden;
+http.request = http.get = https.request = https.get = forbidden;
+dgram.createSocket = forbidden;
+${paired ? `registerHooks({ resolve(specifier, context, next) {
+  if (specifier === 'node:sqlite') return { url: 'data:text/javascript,' + encodeURIComponent("export class DatabaseSync { constructor() { process.stderr.write('Unexpected network or OS effect' + String.fromCharCode(10)); process.exit(97); } }"), shortCircuit: true };
+  return next(specifier, context);
+} });` : ''}
 globalThis.fetch = forbidden;
 syncBuiltinESMExports();
 `, { mode: 0o600 });
@@ -49,6 +64,12 @@ syncBuiltinESMExports();
   };
   for (const code of [
     "await fetch('offline:forbidden')",
+    "const fs = await import('node:fs'); fs.writeFileSync('forbidden', '')",
+    "const fs = await import('node:fs/promises'); await fs.mkdir('forbidden')",
+    "const fs = await import('node:fs'); fs.openSync('forbidden', 'w')",
+    ...(paired ? ["const { DatabaseSync } = await import('node:sqlite'); new DatabaseSync('forbidden')"] : []),
+    "const net = await import('node:net'); net.createServer()",
+    "const https = await import('node:https'); https.get('https://example.com')",
     "const { lookup } = await import('node:dns'); lookup(Symbol(), () => {})",
     "const { resolve4 } = await import('node:dns'); resolve4(Symbol(), () => {})",
     "const { lookup } = await import('node:dns/promises'); await lookup(Symbol())",
@@ -61,8 +82,8 @@ syncBuiltinESMExports();
     assert.equal(blocked.stdout, '');
     assert.equal(blocked.stderr, 'Unexpected network or OS effect\n');
   }
-  const run = args => {
-    const result = invoke([client, ...args]);
+  const run = (args, executable = client) => {
+    const result = invoke([executable, ...args]);
     assert.equal(result.status, 0, result.stderr);
     assert.equal(result.stderr, '');
     return result.stdout;
@@ -109,7 +130,17 @@ syncBuiltinESMExports();
     assert.match(error.message, /ack-payload-bytes/);
     await assert.rejects(access(output), { code: 'ENOENT' });
   }
+  if (paired) {
+    const helper = join(root, 'skills/internet-quality/scripts/helper.mjs');
+    assert.equal(run(['--version'], helper).trim(), manifest.version);
+    assert.match(run(['--help'], helper), /plan/);
+    for (const args of [['plan'], ['plan', 'retry-report', '--day', '2026-01-01'], ['plan', 'resume', '--background', 'login'], ...['retry-revoke','install','update','uninstall','pause','resume','stop','revoke','recover','traffic-pause','traffic-resume'].map(action => ['plan', action]), ...['allow','withdraw','reconcile'].map(action => ['plan','public', action])]) {
+      const plan = JSON.parse(run(args, helper));
+      assert.equal(plan.schema, 'iqm-helper-plan-v1');
+      assert.deepEqual(plan.plan_effects, { writes: false, network: false, native_discovery: false, downloads: false });
+    }
+  }
 } finally {
   await rm(temporary, { recursive: true, force: true });
 }
-console.log(JSON.stringify({ version: manifest.version, node: process.version, platform: process.platform, verified_package_files: entries.length + 1, offline_profiles: ['quick', 'standard', 'extended-v1'], scope: 'Checksums and guarded offline CLI commands. No live measurement, publication or OS network observation.' }));
+console.log(JSON.stringify({ version: manifest.version, node: process.version, platform: process.platform, verified_package_files: entries.size, offline_profiles: ['quick', 'standard', 'extended-v1'], scope: 'Checksums and guarded offline CLI commands. No live measurement, publication or OS network observation.' }));
