@@ -1,8 +1,8 @@
 {
   "$schema": "https://agent-plugins.org/schemas/1.0.0/plugin.schema.json",
   "name": "internet-quality-map",
-  "version": "0.7.0",
-  "description": "Measure Internet responsiveness for agentic workflows and read community connection reports.",
+  "version": "0.20.0",
+  "description": "Investigate slow agent connections with authorized HTTP tests, shared interpretation, one-off comparisons and everyday timing intervals.",
   "homepage": "https://internet-quality-map.nf-93f.workers.dev/",
   "keywords": [
     "internet",
@@ -16,7 +16,7 @@
       "interface": {
         "displayName": "Internet Quality Map",
         "shortDescription": "Test agent connectivity",
-        "longDescription": "Read community reports, run a bounded connection test, and contribute a coarse-area result with consent.",
+        "longDescription": "Troubleshoot connection waits or explore public observations. Run a bounded private test when authorized, interpret latency and jitter, and explore exact one-off cohorts or everyday timing intervals without testing. Publication needs separate consent.",
         "category": "Developer Tools",
         "capabilities": [
           "Read",
