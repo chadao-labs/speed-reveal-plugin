@@ -1,4 +1,4 @@
 interface:
   display_name: "Internet Quality Map"
-  short_description: "Check connectivity for agentic workflows"
-  default_prompt: "Use $internet-quality to check whether this execution host's Internet connection may slow agent work."
+  short_description: "Investigate network waits and private everyday quality"
+  default_prompt: "Use $internet-quality to investigate network waits in agent work and explain available public comparisons before choosing a test or explicitly enabling private everyday observation."

@@ -1,0 +1,11 @@
+{
+  "name": "internet-quality-map",
+  "version": "0.20.0",
+  "filename": "internet-quality-map-0.20.0.zip",
+  "sha256": "9f76b23b1e6bd1265c4a5b2047ae3b10cf453da71fead2d41d0598d43fba034a",
+  "bytes": 546477,
+  "files": 8,
+  "client_sha256": "228eb1ac1dcd7f804e62d1331bd88a249c7f5b0b784078ace0907769a9bcb2f3",
+  "helper_sha256": "cc37313aa27003267007f27293b53c72b6e4dcf607a55a236a1d5caa91f4f8eb",
+  "trust_filename": "internet-quality-map-0.20.0.trust.json"
+}

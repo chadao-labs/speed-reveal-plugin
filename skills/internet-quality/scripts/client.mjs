@@ -1,4 +1,1034 @@
 #!/usr/bin/env node
+var __defProp = Object.defineProperty;
+var __getOwnPropNames = Object.getOwnPropertyNames;
+var __esm = (fn, res, err) => function __init() {
+  if (err) throw err[0];
+  try {
+    return fn && (res = (0, fn[__getOwnPropNames(fn)[0]])(fn = 0)), res;
+  } catch (e) {
+    throw err = [e], e;
+  }
+};
+var __export = (target, all) => {
+  for (var name in all)
+    __defProp(target, name, { get: all[name], enumerable: true });
+};
+
+// src/domain/everyday-control.js
+var EVERYDAY_CONTROL_POLICY, contract, compact, status, receipt, ledger, operations, everydayControlOperation;
+var init_everyday_control = __esm({
+  "src/domain/everyday-control.js"() {
+    EVERYDAY_CONTROL_POLICY = Object.freeze({ request_deadline_ms: 2e3, helper_request_deadline_ms: 15e3, message_bytes: 4096, status_reply_bytes: 7168, saved_status_receipt_bytes: 6144, max_connections: 8, measurement_requests: 2 });
+    contract = (replyBytes, replay, deadlineMs = EVERYDAY_CONTROL_POLICY.request_deadline_ms) => Object.freeze({ replyBytes, replay, deadlineMs });
+    compact = contract(EVERYDAY_CONTROL_POLICY.message_bytes, "none");
+    status = contract(EVERYDAY_CONTROL_POLICY.status_reply_bytes, "none");
+    receipt = contract(EVERYDAY_CONTROL_POLICY.status_reply_bytes, "receipt");
+    ledger = contract(EVERYDAY_CONTROL_POLICY.status_reply_bytes, "ledger");
+    operations = Object.freeze({
+      status,
+      "helper-scope": compact,
+      exclude: compact,
+      finish: compact,
+      pause: receipt,
+      stop: receipt,
+      revoke: receipt,
+      enroll: receipt,
+      resume: receipt,
+      recover: receipt,
+      "retry-report": receipt,
+      "retry-revoke": receipt,
+      "discard-raw": receipt,
+      "traffic-resume": receipt,
+      "traffic-stop": receipt,
+      "public-admit": ledger,
+      "public-apply": contract(EVERYDAY_CONTROL_POLICY.status_reply_bytes, "ledger", EVERYDAY_CONTROL_POLICY.helper_request_deadline_ms),
+      "helper-admit": ledger,
+      "helper-cancel": ledger,
+      "helper-apply": contract(EVERYDAY_CONTROL_POLICY.status_reply_bytes, "ledger", EVERYDAY_CONTROL_POLICY.helper_request_deadline_ms),
+      "lifecycle-admit": ledger,
+      "lifecycle-lookup": ledger,
+      "lifecycle-ready": ledger,
+      "lifecycle-release": ledger
+    });
+    everydayControlOperation = (value) => typeof value === "string" && Object.hasOwn(operations, value) ? operations[value] : null;
+  }
+});
+
+// src/client/helper-coordination.mjs
+import { createHash, randomInt } from "node:crypto";
+import { createServer } from "node:net";
+function assertHelperSupported() {
+  if (!helperSupported()) throw new Error("helper-platform-unsupported");
+}
+function coordinationPorts() {
+  assertHelperSupported();
+  const uid = process.getuid();
+  if (!Number.isSafeInteger(uid) || uid < 0) throw new Error("coordination-unavailable");
+  const ports = [];
+  for (let counter = 0; ports.length < HELPER_COORDINATION.members; counter++) {
+    const digest = createHash("sha256").update(`${HELPER_COORDINATION.namespace}\0${uid}\0${counter}`).digest();
+    const port = 2e4 + digest.readUInt16BE(0) % 1e4;
+    if (!ports.includes(port)) ports.push(port);
+  }
+  return ports;
+}
+function releaseListeners(listeners) {
+  return Promise.all(listeners.map((listener) => {
+    listener.releasing = true;
+    return listener.closed ??= new Promise((resolve2) => listener.server.close(resolve2));
+  }));
+}
+async function bind(port, continuity, signal) {
+  signal?.throwIfAborted();
+  const listener = { server: createServer((socket) => socket.destroy()), releasing: false, closed: null };
+  const lost = () => {
+    if (!listener.releasing) continuity.abort(new Error("coordination-continuity-lost"));
+  };
+  listener.server.on("close", lost);
+  try {
+    await new Promise((resolve2, reject) => {
+      listener.server.once("error", reject);
+      listener.server.listen({ host: "127.0.0.1", port, exclusive: true, reusePort: false }, () => {
+        listener.server.removeListener("error", reject);
+        listener.server.on("error", lost);
+        resolve2();
+      });
+    });
+    signal?.throwIfAborted();
+    return listener;
+  } catch (error) {
+    await releaseListeners([listener]);
+    throw error;
+  }
+}
+async function jitter(signal, remaining) {
+  signal?.throwIfAborted();
+  await new Promise((resolve2, reject) => {
+    const timer = setTimeout(done, Math.min(randomInt(8, 25), remaining));
+    const aborted = () => done(signal.reason);
+    signal?.addEventListener("abort", aborted, { once: true });
+    function done(error) {
+      clearTimeout(timer);
+      signal?.removeEventListener("abort", aborted);
+      if (error) reject(error);
+      else resolve2();
+    }
+  });
+}
+async function acquireEverydayStartPermission({ signal } = {}) {
+  signal?.throwIfAborted();
+  if (!helperSupported()) {
+    const released = Promise.resolve();
+    return { status: "helper-not-supported", signal, release: () => released };
+  }
+  const ports = coordinationPorts(), deadline = performance.now() + HELPER_COORDINATION.deadline_ms;
+  do {
+    const listeners = [], continuity = new AbortController();
+    try {
+      for (let index = 0; index < ports.length; index++) {
+        signal?.throwIfAborted();
+        try {
+          listeners.push(await bind(ports[index], continuity, signal));
+        } catch (error) {
+          if (error.code !== "EADDRINUSE") throw error;
+        }
+        continuity.signal.throwIfAborted();
+        if (listeners.length === HELPER_COORDINATION.quorum) {
+          let releasing;
+          return {
+            status: "held",
+            signal: signal ? AbortSignal.any([signal, continuity.signal]) : continuity.signal,
+            release: () => releasing ??= releaseListeners(listeners).then(() => void 0)
+          };
+        }
+        if (listeners.length + ports.length - index - 1 < HELPER_COORDINATION.quorum) break;
+      }
+    } catch (error) {
+      await releaseListeners(listeners);
+      signal?.throwIfAborted();
+      throw new Error("coordination-unavailable", { cause: error });
+    }
+    await releaseListeners(listeners);
+    if (performance.now() < deadline) await jitter(signal, deadline - performance.now());
+  } while (performance.now() < deadline);
+  throw new Error("coordination-busy");
+}
+var HELPER_COORDINATION, helperSupported;
+var init_helper_coordination = __esm({
+  "src/client/helper-coordination.mjs"() {
+    HELPER_COORDINATION = Object.freeze({ namespace: "iqm-helper-coordination-v1", deadline_ms: 4e3, members: 5, quorum: 3 });
+    helperSupported = () => ["darwin", "linux"].includes(process.platform);
+  }
+});
+
+// src/client/everyday-control.mjs
+var everyday_control_exports = {};
+__export(everyday_control_exports, {
+  excludeExistingEveryday: () => excludeExistingEveryday,
+  requestEverydayControl: () => requestEverydayControl,
+  selectedEverydayDirectory: () => selectedEverydayDirectory
+});
+async function selectedEverydayDirectory(directory) {
+  if (directory !== void 0) {
+    if (typeof directory !== "string" || !directory.trim() || directory.includes("\0")) throw new Error("Invalid everyday installation directory.");
+    return directory;
+  }
+  const [{ homedir }, { join }] = await Promise.all([import("node:os"), import("node:path")]);
+  return join(homedir(), ".internet-quality-map", "everyday-v1");
+}
+async function locatorAt(directory) {
+  const [{ lstat: lstat2, open: open2, realpath: realpath2 }, { join, resolve: resolve2 }, { constants }] = await Promise.all([import("node:fs/promises"), import("node:path"), import("node:fs")]);
+  let directoryStat;
+  try {
+    directoryStat = await lstat2(directory);
+  } catch (error) {
+    if (error.code === "ENOENT") return null;
+    throw new Error("Everyday helper is unavailable.");
+  }
+  if (!directoryStat.isDirectory() || directoryStat.isSymbolicLink() || directoryStat.uid !== process.getuid?.() || directoryStat.mode & 63 || await realpath2(directory) !== resolve2(directory)) throw new Error("Everyday installation must be a private real directory.");
+  let file;
+  try {
+    file = await open2(join(directory, "locator.json"), constants.O_RDONLY | constants.O_NOFOLLOW);
+    const stat = await file.stat();
+    if (!stat.isFile() || stat.nlink !== 1 || stat.uid !== process.getuid() || stat.mode & 63 || stat.size > EVERYDAY_CONTROL_POLICY.message_bytes) throw new Error();
+    const value = JSON.parse(await file.readFile("utf8"));
+    if (Object.keys(value).length !== 3 || !Number.isInteger(value.port) || value.port < 1 || value.port > 65535 || !/^[a-f0-9]{32}$/.test(value.epoch) || !/^[a-f0-9]{64}$/.test(value.token)) throw new Error();
+    return value;
+  } catch {
+    throw new Error("Everyday helper is unavailable. Start its existing foreground owner explicitly; discovery does not start it.");
+  } finally {
+    await file?.close();
+  }
+}
+async function connect(directory, onLoss = () => {
+}) {
+  const locator = await locatorAt(await selectedEverydayDirectory(directory));
+  if (!locator) return null;
+  const [{ createConnection }, { randomBytes }] = await Promise.all([import("node:net"), import("node:crypto")]);
+  const socket = createConnection({ host: "127.0.0.1", port: locator.port });
+  let pending = null, buffer = "", ended = false;
+  const unavailable = () => {
+    if (ended) return;
+    ended = true;
+    if (pending) {
+      clearTimeout(pending.timer);
+      pending.reject(new Error("Everyday helper control continuity was lost."));
+      pending = null;
+    }
+    onLoss();
+  };
+  socket.on("error", unavailable);
+  socket.on("close", unavailable);
+  socket.setEncoding("utf8");
+  socket.on("data", (chunk) => {
+    buffer += chunk;
+    if (!pending || Buffer.byteLength(buffer) > pending.contract.replyBytes) {
+      socket.destroy();
+      return;
+    }
+    const end = buffer.indexOf("\n");
+    if (end < 0) return;
+    try {
+      const reply = JSON.parse(buffer.slice(0, end));
+      if (buffer.slice(end + 1) || reply.epoch !== locator.epoch || reply.id !== pending.id) throw new Error();
+      const current = pending;
+      pending = null;
+      buffer = "";
+      clearTimeout(current.timer);
+      if (reply.error) current.reject(new Error("Everyday helper refused control: " + reply.error));
+      else current.resolve(reply);
+    } catch {
+      socket.destroy();
+    }
+  });
+  return {
+    request(command) {
+      if (ended || pending) return Promise.reject(new Error("Everyday helper is unavailable."));
+      const contract2 = everydayControlOperation(command.operation);
+      if (!contract2) return Promise.reject(new Error("Unknown everyday control operation."));
+      const id = randomBytes(16).toString("hex");
+      const serialized = JSON.stringify({ ...command, id, epoch: locator.epoch, token: locator.token }) + "\n";
+      if (Buffer.byteLength(serialized) > EVERYDAY_CONTROL_POLICY.message_bytes) return Promise.reject(new Error("Everyday helper request exceeds its byte limit."));
+      return new Promise((resolve2, reject) => {
+        const timer = setTimeout(() => {
+          socket.destroy();
+          unavailable();
+        }, contract2.deadlineMs);
+        pending = { id, contract: contract2, resolve: resolve2, reject, timer };
+        socket.write(serialized);
+      });
+    },
+    close() {
+      socket.end();
+      socket.destroy();
+    }
+  };
+}
+async function requestEverydayControl(directory, command) {
+  const connection = await connect(directory);
+  if (!connection) throw new Error("Everyday installation is absent.");
+  try {
+    return await connection.request(command);
+  } finally {
+    connection.close();
+  }
+}
+async function excludeExistingEveryday({ directory, signal } = {}) {
+  signal?.throwIfAborted();
+  const lease = await acquireEverydayStartPermission({ signal });
+  if (!helperSupported()) return { status: "helper-not-supported", signal, finish: async () => ({ status: "helper-not-supported" }) };
+  const lost = new AbortController();
+  let finishing = false;
+  let connection;
+  try {
+    if (directory !== void 0) {
+      const [{ lstat: lstat2 }, { resolve: resolve2 }] = await Promise.all([import("node:fs/promises"), import("node:path")]);
+      const canonical = await selectedEverydayDirectory();
+      if (resolve2(directory) !== resolve2(canonical) && await lstat2(canonical).then(() => true, (error) => {
+        if (error.code === "ENOENT") return false;
+        throw error;
+      })) throw new Error("Canonical everyday installation cannot be bypassed.");
+    }
+    connection = await connect(directory, () => {
+      if (!finishing) lost.abort(new Error("Everyday helper exclusion continuity was lost."));
+    });
+  } catch (error) {
+    await lease.release();
+    throw error;
+  }
+  if (!connection) return { status: "absent", signal: lease.signal, finish: async () => {
+    await lease.release();
+    return { status: "absent" };
+  } };
+  let reply;
+  try {
+    reply = await connection.request({ operation: "exclude" });
+    if (Object.keys(reply).sort().join(",") !== "epoch,exclusion,id,revision" || !/^[a-f0-9]{32}$/.test(reply.exclusion) || !Number.isSafeInteger(reply.revision) || reply.revision < 0) throw new Error("Everyday helper returned an invalid exclusion receipt.");
+    lease.signal?.throwIfAborted();
+    await lease.release();
+  } catch (error) {
+    connection.close();
+    await lease.release();
+    throw error;
+  }
+  const combined = signal ? AbortSignal.any([signal, lost.signal]) : lost.signal;
+  let finished;
+  const handle = {
+    status: "pending",
+    signal: combined,
+    finish() {
+      if (!finished) finished = (async () => {
+        finishing = true;
+        try {
+          if (lost.signal.aborted) return { status: "recovery-required" };
+          const finished2 = await connection.request({ operation: "finish", exclusion: reply.exclusion });
+          if (Object.keys(finished2).sort().join(",") !== "epoch,id,intent,revision" || !["paused", "stopped", "revoked"].includes(finished2.intent) || !Number.isSafeInteger(finished2.revision) || finished2.revision <= reply.revision) throw new Error("Invalid finish receipt.");
+          return { status: finished2.intent };
+        } catch {
+          return { status: "recovery-required" };
+        } finally {
+          connection.close();
+        }
+      })();
+      return finished;
+    }
+  };
+  if (signal?.aborted) {
+    await handle.finish();
+    signal.throwIfAborted();
+  }
+  return handle;
+}
+var init_everyday_control2 = __esm({
+  "src/client/everyday-control.mjs"() {
+    init_everyday_control();
+    init_helper_coordination();
+  }
+});
+
+// src/client/agent.mjs
+init_everyday_control();
+init_helper_coordination();
+
+// ../../packages/http-measurement/profiles.js
+var METHOD = "iqm-http-v1";
+var MiB = 1024 * 1024;
+var PROFILES = Object.freeze({
+  quick: Object.freeze({ baseline_ms: 2e3, load_ms: 5e3, max_download_bytes: 32 * MiB, max_upload_bytes: 8 * MiB }),
+  standard: Object.freeze({ baseline_ms: 3e3, load_ms: 8e3, max_download_bytes: 128 * MiB, max_upload_bytes: 32 * MiB }),
+  "extended-v1": Object.freeze({ baseline_ms: 3e3, load_ms: 8e3, max_download_bytes: 1024 * MiB, max_upload_bytes: 1024 * MiB })
+});
+var PROFILE_IDS = Object.freeze(Object.keys(PROFILES));
+var MAX_TRANSFER_BYTES = Math.max(...Object.values(PROFILES).flatMap((profile) => [profile.max_download_bytes, profile.max_upload_bytes]));
+var SCHEDULE = Object.freeze({ probe_interval_ms: 250, request_timeout_ms: 3e3, overall_ms: 3e4 });
+var TEST_ENDPOINTS = Object.freeze({ download: "https://speed.cloudflare.com/__down", upload: "https://speed.cloudflare.com/__up" });
+
+// ../../packages/http-measurement/summary.js
+function summarizePhase({ samples }) {
+  const values = samples.filter((sample) => sample.status === "ok").map((sample) => sample.elapsed_ms).sort((a, b) => a - b);
+  const differences = [];
+  const ordered = [...samples].sort((a, b) => a.sequence - b.sequence);
+  for (let i = 1; i < ordered.length; i++) {
+    const previous = ordered[i - 1];
+    const current = ordered[i];
+    if (previous.status === "ok" && current.status === "ok" && current.sequence === previous.sequence + 1) {
+      differences.push(Math.abs(current.elapsed_ms - previous.elapsed_ms));
+    }
+  }
+  const percentile = (fraction) => values.length ? values[Math.ceil(values.length * fraction) - 1] : null;
+  return {
+    sent: samples.length,
+    received: values.length,
+    failed: samples.length - values.length,
+    min_ms: values.length ? values[0] : null,
+    median_ms: percentile(0.5),
+    p95_ms: percentile(0.95),
+    max_ms: values.length ? values[values.length - 1] : null,
+    jitter_ms: differences.length ? differences.reduce((sum, value) => sum + value, 0) / differences.length : null
+  };
+}
+function summarizeMeasurement({ phases }) {
+  const [idle, download, upload] = phases;
+  const throughput2 = ({ transfer }) => transfer && transfer.bytes > 0 && transfer.elapsed_ms > 0 ? transfer.bytes * 8 / transfer.elapsed_ms / 1e3 : null;
+  return { download_mbps: throughput2(download), upload_mbps: throughput2(upload), idle: summarizePhase(idle), download: summarizePhase(download), upload: summarizePhase(upload) };
+}
+function loadEvidence({ phases }) {
+  return Object.fromEntries(phases.filter((phase) => phase.phase !== "idle").map(({ phase, transfer }) => [phase, {
+    bytes: transfer.bytes,
+    elapsed_ms: transfer.elapsed_ms,
+    termination: transfer.termination
+  }]));
+}
+function measurementQuality(measurement) {
+  const transfers = measurement.phases.filter((phase) => phase.transfer).map((phase) => phase.transfer);
+  return {
+    byte_capped: transfers.some((transfer) => transfer.termination === "byte_limit"),
+    failed_requests: transfers.reduce((total, transfer) => total + transfer.failed_requests, 0) + measurement.phases.reduce((total, phase) => total + phase.samples.filter((sample) => sample.status !== "ok").length, 0),
+    short_load: transfers.some((transfer) => transfer.elapsed_ms < PROFILES[measurement.profile].load_ms * 0.8)
+  };
+}
+
+// src/domain/comparisons.js
+var comparisonPolicy = Object.freeze({
+  estimator: "session-summary-median-v1",
+  days: 28,
+  floor: 5,
+  page: 50,
+  maxRows: 2e4,
+  maxBytes: 32 * 1024 * 1024,
+  maxRowBytes: 8192
+});
+var comparisonEnums = Object.freeze({
+  method: [METHOD],
+  profile: PROFILE_IDS,
+  runtime: ["browser", "node"],
+  execution: ["this-device", "agent-host"],
+  placement: ["unknown", "local", "cloud"],
+  attribution: ["session", "measurement"],
+  location_source: ["ip", "device", "none"],
+  group_by: ["country_network", "cell_network"]
+});
+var comparisonMetrics = Object.freeze([
+  ...["idle", "download", "upload"].flatMap((phase) => [
+    ...["median_ms", "p95_ms", "jitter_ms"].map((field) => ({
+      id: `${phase}_${field}`,
+      phase,
+      field,
+      successes: field === "jitter_ms" ? 2 : 1,
+      unit: "ms",
+      decimals: 3,
+      label: `${phase} per-test HTTP ${field}`
+    })),
+    {
+      id: `${phase}_failure_fraction`,
+      phase,
+      field: "failure_fraction",
+      successes: 0,
+      unit: "fraction",
+      decimals: 6,
+      label: `${phase} per-test failed probe fraction`
+    }
+  ]),
+  ...["download", "upload"].map((phase) => ({
+    id: `${phase}_mbps`,
+    phase: null,
+    field: `${phase}_mbps`,
+    successes: 0,
+    unit: "Mbps",
+    decimals: 3,
+    label: `${phase} achieved HTTP payload rate`
+  }))
+]);
+var comparisonExclusions = [
+  "missing_counts",
+  "no_attempts",
+  "insufficient_successes",
+  "missing_value"
+];
+var comparisonCaveats = [
+  "missing_quality",
+  "byte_capped",
+  "short_load",
+  "request_failures",
+  ...["download", "upload"].flatMap((p) => [
+    `${p}_missing_load`,
+    `${p}_byte_capped`,
+    `${p}_short_load`,
+    `${p}_zero_load`
+  ])
+];
+
+// src/domain/comparison-response.js
+var optional = ["country", "asn", "cell_lat", "cell_lon"];
+var keys = [...Object.keys(comparisonEnums), ...optional];
+var count = (value) => Number.isSafeInteger(value) && value >= 0;
+var fail = () => {
+  throw new Error("The comparison service returned inconsistent evidence.");
+};
+function comparisonURL(filters, origin, continuation = null) {
+  if (continuation !== null && !/^https?:\/\//.test(continuation)) fail();
+  const url = new URL(continuation ?? "/api/v1/comparisons", origin);
+  if (url.origin !== origin || url.pathname !== "/api/v1/comparisons" || url.username || url.password || url.hash) fail();
+  if (continuation !== null) {
+    for (const key of url.searchParams.keys()) {
+      if (![...keys, "cursor"].includes(key) || url.searchParams.getAll(key).length !== 1) fail();
+    }
+    const cursor = url.searchParams.get("cursor");
+    if (!cursor || cursor.length > 4096 || !/^[A-Za-z0-9_-]+$/.test(cursor)) fail();
+    for (const key of keys) if (url.searchParams.get(key) !== (filters[key] == null ? null : String(filters[key]))) fail();
+  } else {
+    for (const key of keys) if (filters[key] != null) url.searchParams.set(key, filters[key]);
+  }
+  return url.href;
+}
+function comparisonPage(body, filters, origin) {
+  if (!body || typeof body.dataset !== "string" || !body.dataset || body.dataset.length > 80 || body.estimator !== "session-summary-median-v1") fail();
+  if (keys.some((key) => body.filters?.[key] !== (filters[key] ?? null))) fail();
+  if (Object.keys(body.filters).length !== keys.length) fail();
+  if (!body.period || !["start_day", "end_day_exclusive"].every((key) => /^\d{4}-\d{2}-\d{2}$/.test(body.period[key])) || body.period.basis !== "publication-session-day") fail();
+  for (const key of ["captured_at", "completed_at", "stale_after", "continuation_expires_at"]) if (!count(body[key])) fail();
+  if (typeof body.stale !== "boolean" || body.personal_comparison?.available !== false || !Array.isArray(body.personal_comparison.reasons) || !Array.isArray(body.missing_evidence)) fail();
+  const missingReasons = ["placement_not_recorded", "measurement_attribution_not_recorded"];
+  if ([...body.missing_evidence, ...body.personal_comparison.reasons].some((reason) => !missingReasons.includes(reason))) fail();
+  if (body.failed_build !== null && (!body.failed_build || !/^\d{4}-\d{2}-\d{2}$/.test(body.failed_build.target_day) || !["normalized_capacity", "aggregate_capacity", "validation_failed", "build_failed"].includes(body.failed_build.failure_code))) fail();
+  if (!body.population || !count(body.population.groups) || !count(body.population.tests) || !["observations", "no-observations"].includes(body.state)) fail();
+  if (body.state === "no-observations" !== (body.population.groups === 0)) fail();
+  if (!Array.isArray(body.rows) || body.rows.length > 50 || body.rows.length > body.population.groups || body.page_size !== 50) fail();
+  const seen = /* @__PURE__ */ new Set();
+  for (const row of body.rows) {
+    if (typeof row.key !== "string" || row.key.length > 2048 || seen.has(row.key) || !count(row.tests) || !count(row.session_days) || row.tests > body.population.tests) fail();
+    seen.add(row.key);
+    if (row.organization !== null && (typeof row.organization !== "string" || row.organization.length > 160)) fail();
+    const dimensions = row.dimensions;
+    if (!dimensions || Object.keys(comparisonEnums).some((key) => dimensions[key] !== filters[key])) fail();
+    if (typeof dimensions.country !== "string" || typeof dimensions.asn !== "string" || filters.country != null && dimensions.country !== filters.country || filters.asn != null && dimensions.asn !== filters.asn) fail();
+    for (const key of ["device_link", "internet_service"]) if (!dimensions[key] || typeof dimensions[key].value !== "string" || !["user", "browser", "system", "unknown"].includes(dimensions[key].source)) fail();
+    const location = dimensions.location;
+    if (filters.group_by === "country_network") {
+      if (location !== null) fail();
+    } else {
+      if (!location || !["ip", "device"].includes(location.source) || location.source !== filters.location_source || location.cell_degrees !== 0.25) fail();
+      if (!count(location.cell_lat) || location.cell_lat > 719 || !count(location.cell_lon) || location.cell_lon > 1439) fail();
+      if (location.latitude !== (location.cell_lat + 0.5) * 0.25 - 90 || location.longitude !== (location.cell_lon + 0.5) * 0.25 - 180) fail();
+      if (filters.cell_lat != null && (location.cell_lat !== filters.cell_lat || location.cell_lon !== filters.cell_lon)) fail();
+    }
+    for (const def of comparisonMetrics) {
+      const metric = row.metrics?.[def.id];
+      if (!metric || !["available", "below_floor", "unavailable"].includes(metric.availability)) fail();
+      if (!count(metric.eligible_tests) || !count(metric.excluded_tests) || metric.eligible_tests + metric.excluded_tests !== row.tests || !count(metric.p95_under_20_success_tests) || metric.p95_under_20_success_tests > metric.eligible_tests) fail();
+      if (metric.availability === "available" ? !Number.isFinite(metric.value) || metric.value < 0 : metric.value !== null) fail();
+      if (metric.availability !== (metric.eligible_tests >= comparisonPolicy.floor ? "available" : metric.eligible_tests ? "below_floor" : "unavailable")) fail();
+      if (def.unit === "fraction" && metric.value > 1) fail();
+      if (comparisonExclusions.some((key) => !count(metric.exclusions?.[key])) || comparisonExclusions.reduce((n, key) => n + metric.exclusions[key], 0) !== metric.excluded_tests) fail();
+    }
+    if (comparisonCaveats.some((key) => !count(row.caveats?.[key]) || row.caveats[key] > row.tests)) fail();
+    for (const phase of ["idle", "download", "upload"]) {
+      const counts = row.phases?.[phase];
+      if (!counts || ["sent", "received", "failed", "tests_with_counts", "tests_missing_counts"].some((key) => !count(counts[key]))) fail();
+      if (counts.sent !== counts.received + counts.failed || counts.tests_with_counts + counts.tests_missing_counts !== row.tests) fail();
+    }
+  }
+  if (body.rows.reduce((sum, row) => sum + row.tests, 0) > body.population.tests) fail();
+  if (body.next !== null && typeof body.next !== "string") fail();
+  const next = body.next === null ? null : comparisonURL(filters, origin, body.next);
+  return { ...body, next };
+}
+function appendComparison(snapshot, page) {
+  if (snapshot) {
+    if (snapshot.dataset !== page.dataset || JSON.stringify(snapshot.filters) !== JSON.stringify(page.filters) || snapshot.population.tests !== page.population.tests || snapshot.population.groups !== page.population.groups || JSON.stringify(snapshot.period) !== JSON.stringify(page.period) || snapshot.captured_at !== page.captured_at || snapshot.completed_at !== page.completed_at || snapshot.stale_after !== page.stale_after || snapshot.estimator !== page.estimator) fail();
+    const seen = new Set(snapshot.rows.map((row) => row.key));
+    if (page.rows.some((row) => seen.has(row.key))) fail();
+  }
+  const combined = { ...page, stale: Boolean(snapshot?.stale || page.stale), rows: [...snapshot?.rows ?? [], ...page.rows], pages: (snapshot?.pages ?? 0) + 1 };
+  const tests = combined.rows.reduce((sum, row) => sum + row.tests, 0);
+  if (combined.rows.length > page.population.groups || tests > page.population.tests) fail();
+  if (page.next === null && (combined.rows.length !== page.population.groups || tests !== page.population.tests)) fail();
+  return combined;
+}
+
+// src/client/comparison-reader.mjs
+var comparisonReadPolicy = Object.freeze({ deadline_ms: 2e4, request_ms: 5e3, context_bytes: 64 * 1024, page_bytes: 512 * 1024, max_pages: 3 });
+var comparisonFlags = ["compare", "comparisons-only", "lookup-area", "comparison-country", "comparison-cell-lat", "comparison-cell-lon", "comparison-area-source", "comparison-asn", "comparison-runtime", "comparison-execution", "comparison-placement", "comparison-attribution", "comparison-location-source", "comparison-pages", "host-placement", "host-placement-source"];
+var sources = ["user", "system"];
+var countryValid = (value) => value === "unknown" || /^[A-Z]{2}$/.test(value ?? "");
+var asnValid = (value) => value === "unknown" || /^(0|[1-9][0-9]{0,9})$/.test(value ?? "") && Number(value) <= 4294967295;
+var cellValid = (value, max) => /^(0|[1-9][0-9]{0,3})$/.test(value ?? "") && Number(value) <= max;
+function comparisonRequest(options, seen) {
+  const afterTest = options.compare !== void 0;
+  const lookupOnly = options["comparisons-only"] !== void 0;
+  if (afterTest && lookupOnly) throw new Error("--compare and --comparisons-only are mutually exclusive.");
+  if (!afterTest && !lookupOnly) {
+    if (comparisonFlags.some((flag) => seen.has("--" + flag))) throw new Error("Comparison modifiers require --compare or --comparisons-only.");
+    return null;
+  }
+  if (lookupOnly && [...seen].some((flag) => !["--origin", "--profile", "--plan", ...comparisonFlags.filter((flag2) => !flag2.startsWith("host-")).map((flag2) => "--" + flag2)].includes(flag))) throw new Error("--comparisons-only accepts comparison selectors, --origin, --profile and --plan only.");
+  if (afterTest && (seen.has("--comparison-runtime") || seen.has("--comparison-execution"))) throw new Error("A test comparison uses the actual runtime and execution; overrides require --comparisons-only.");
+  const scopes = (afterTest ? options.compare : options["comparisons-only"]).split(",");
+  if (scopes.some((scope2) => !["nearby", "country", "world"].includes(scope2)) || new Set(scopes).size !== scopes.length) throw new Error("Comparison scopes must be a nonempty duplicate-free list of nearby,country,world.");
+  const cohort = { method: "iqm-http-v1", profile: options.profile, runtime: afterTest ? "node" : options["comparison-runtime"] ?? "node", execution: afterTest ? options.execution : options["comparison-execution"] ?? "agent-host", placement: options["comparison-placement"] ?? "unknown", attribution: options["comparison-attribution"] ?? "session", location_source: options["comparison-location-source"] ?? "ip", asn: options["comparison-asn"] ?? null };
+  for (const [key, values] of Object.entries(comparisonEnums)) if (key !== "group_by" && !values.includes(cohort[key])) throw new Error("Invalid comparison " + key + ".");
+  if (cohort.runtime === "browser" && cohort.execution !== "this-device") throw new Error("Browser comparison execution must be this-device.");
+  if (cohort.asn !== null && !asnValid(cohort.asn)) throw new Error("Invalid --comparison-asn.");
+  if (scopes.includes("nearby") && cohort.location_source === "none") throw new Error("Nearby requires an ip or device location-source cohort.");
+  const country = options["comparison-country"] ?? null;
+  if (country !== null && (!countryValid(country) || !scopes.includes("country"))) throw new Error("--comparison-country requires a country scope and an upper-case country code or unknown.");
+  const hasCell = options["comparison-cell-lat"] !== void 0 || options["comparison-cell-lon"] !== void 0;
+  if (hasCell && (!scopes.includes("nearby") || !cellValid(options["comparison-cell-lat"], 719) || !cellValid(options["comparison-cell-lon"], 1439))) throw new Error("Supply a valid comparison cell pair for nearby.");
+  const areaSource = options["comparison-area-source"] ?? null;
+  if (hasCell || country !== null ? !sources.includes(areaSource) : areaSource !== null) throw new Error("Explicit comparison geography requires --comparison-area-source user|system, and a source requires geography.");
+  const lookupArea = options["lookup-area"] ?? "none";
+  if (!["none", "ip"].includes(lookupArea)) throw new Error("--lookup-area must be none or ip.");
+  const pages = options["comparison-pages"] ?? "1";
+  if (!/^[1-9]$/.test(pages) || Number(pages) > comparisonReadPolicy.max_pages) throw new Error("--comparison-pages must be 1, 2 or 3.");
+  const placement = options["host-placement"] ?? "unknown";
+  const placementSource = options["host-placement-source"];
+  if (!comparisonEnums.placement.includes(placement) || (placement === "unknown" ? placementSource !== void 0 : !sources.includes(placementSource))) throw new Error("Known --host-placement requires --host-placement-source user|system; unknown has no source.");
+  return {
+    mode: afterTest ? "after-test" : "lookup-only",
+    origin: options.origin,
+    scopes,
+    cohort,
+    target: afterTest ? { measured: true, describes: "execution-host", runtime: "node", execution: options.execution, placement: { value: placement, source: placementSource ?? "unspecified" }, provenance: "Caller-sourced assertions, not tool-verified placement." } : { measured: false, describes: "selected-cohort" },
+    country,
+    cell: hasCell ? { cell_lat: Number(options["comparison-cell-lat"]), cell_lon: Number(options["comparison-cell-lon"]) } : null,
+    areaSource,
+    lookupArea,
+    maxPagesPerScope: Number(pages)
+  };
+}
+function needsLookup(request2) {
+  return request2.lookupArea === "ip" && (request2.scopes.includes("country") && request2.country === null || request2.scopes.includes("nearby") && request2.cell === null);
+}
+function comparisonPlan(request2) {
+  const context = needsLookup(request2) ? 1 : 0;
+  const pages = request2.scopes.filter((scope2) => scope2 === "world" || scope2 === "country" && (request2.country !== null || context) || scope2 === "nearby" && (request2.cell !== null || context)).length * request2.maxPagesPerScope;
+  return {
+    mode: request2.mode,
+    requested: request2.scopes,
+    target: request2.target,
+    cohort: request2.cohort,
+    cohort_relationship: "descriptive-not-peer",
+    area: { country: request2.country, cell: request2.cell, source: request2.areaSource, lookup: request2.lookupArea, unresolved: request2.scopes.filter((scope2) => scope2 === "country" && request2.country === null || scope2 === "nearby" && request2.cell === null) },
+    bounds: { ...comparisonReadPolicy, pages_per_scope: request2.maxPagesPerScope, context_requests: context, comparison_requests: pages, requests: context + pages, response_bytes: context * comparisonReadPolicy.context_bytes + pages * comparisonReadPolicy.page_bytes, excludes: "Protocol overhead, runtime buffers and bytes already in flight." },
+    endpoints: { comparisons: request2.origin + "/api/v1/comparisons", context: context ? request2.origin + "/api/v1/context" : null },
+    effects: { measurement: false, os_observation: false, publication: false, credentials: false, output_reservation: false, disclosure: "Ordinary HTTP requests disclose the chosen coarse filters and request route to the service; no private measurement is sent." }
+  };
+}
+function canonicalURL(value) {
+  const url = new URL(value);
+  url.searchParams.sort();
+  return url.href;
+}
+function readError(code, httpStatus) {
+  return Object.assign(new Error(code), { code, ...httpStatus ? { http_status: httpStatus } : {} });
+}
+async function getJSON(url, maxBytes, { fetcher, signal }) {
+  signal.throwIfAborted();
+  const requestSignal = AbortSignal.any([signal, AbortSignal.timeout(comparisonReadPolicy.request_ms)]);
+  let response;
+  try {
+    response = await fetcher(url, { method: "GET", credentials: "omit", redirect: "error", signal: requestSignal });
+  } catch {
+    throw requestSignal.aborted ? requestSignal.reason : readError("request-failed");
+  }
+  if (response.status !== 200) {
+    await response.body?.cancel().catch(() => {
+    });
+    const code = { 404: "dataset-unavailable", 410: "continuation-expired", 429: "rate-limited", 503: "service-unavailable" }[response.status] ?? "http-error";
+    throw readError(code, response.status);
+  }
+  const length = response.headers.get("content-length");
+  if (length !== null && /^\d+$/.test(length) && Number(length) > maxBytes) {
+    await response.body?.cancel().catch(() => {
+    });
+    throw readError("response-too-large");
+  }
+  const reader = response.body?.getReader();
+  if (!reader) throw readError("invalid-response");
+  const cancel = () => {
+    void reader.cancel().catch(() => {
+    });
+  };
+  requestSignal.addEventListener("abort", cancel, { once: true });
+  const decoder = new TextDecoder("utf-8", { fatal: true });
+  let text = "", bytes2 = 0;
+  try {
+    while (true) {
+      requestSignal.throwIfAborted();
+      const { value, done } = await reader.read();
+      requestSignal.throwIfAborted();
+      if (done) break;
+      bytes2 += value.byteLength;
+      if (bytes2 > maxBytes) throw readError("response-too-large");
+      text += decoder.decode(value, { stream: true });
+    }
+    try {
+      return JSON.parse(text + decoder.decode());
+    } catch {
+      throw readError("invalid-response");
+    }
+  } finally {
+    requestSignal.removeEventListener("abort", cancel);
+    cancel();
+    reader.releaseLock();
+  }
+}
+function contextArea(body) {
+  const country = body?.network?.country;
+  const asn = body?.network?.asn;
+  const location = body?.location;
+  if (country !== null && !/^[A-Z]{2}$/.test(country ?? "") || asn !== null && (!Number.isInteger(asn) || asn < 0 || asn > 4294967295)) throw readError("invalid-context");
+  if (location !== null && (!location || location.source !== "ip" || !Number.isInteger(location.cell_lat) || !Number.isInteger(location.cell_lon) || !cellValid(String(location.cell_lat), 719) || !cellValid(String(location.cell_lon), 1439) || location.cell_degrees !== 0.25 || location.latitude !== (location.cell_lat + 0.5) * 0.25 - 90 || location.longitude !== (location.cell_lon + 0.5) * 0.25 - 180)) throw readError("invalid-context");
+  return { country, asn: asn === null ? null : String(asn), cell: location === null ? null : { cell_lat: location.cell_lat, cell_lon: location.cell_lon } };
+}
+var failureCodes = /* @__PURE__ */ new Set(["request-failed", "dataset-unavailable", "continuation-expired", "rate-limited", "service-unavailable", "http-error", "response-too-large", "invalid-response", "invalid-context", "continuation-loop"]);
+function failure(error, invocationSignal, deadlineSignal) {
+  const code = invocationSignal?.aborted ? "cancelled" : deadlineSignal.aborted ? "deadline" : error.name === "TimeoutError" ? "request-timeout" : failureCodes.has(error.code) ? error.code : "invalid-response";
+  return { code, ...error.http_status ? { http_status: error.http_status } : {} };
+}
+async function readComparisons(request2, { fetcher = fetch, signal: invocationSignal, now: now2 = Date.now } = {}) {
+  const deadline = AbortSignal.timeout(comparisonReadPolicy.deadline_ms);
+  const signal = AbortSignal.any([deadline, ...invocationSignal ? [invocationSignal] : []]);
+  const plan = comparisonPlan(request2);
+  const report = {
+    schema_version: "iqm-comparison-report-v1",
+    status: "completed",
+    mode: request2.mode,
+    requested: request2.scopes,
+    target: request2.target,
+    cohort: request2.cohort,
+    cohort_relationship: "descriptive-not-peer",
+    bounds: plan.bounds,
+    methodology: { estimator: comparisonPolicy.estimator, metric_floor: comparisonPolicy.floor, population_unit: "tests-not-people", timing_path: "Cloudflare HTTP", period_basis: "publication-session-day", attribution: "Request and session hints do not attest the measurement route.", personal_ranking: false },
+    lookup_area: { source: request2.lookupArea === "ip" ? "lookup-request-ip" : "none", state: needsLookup(request2) ? "pending" : "not-needed" },
+    scopes: []
+  };
+  let hint = null;
+  if (needsLookup(request2)) {
+    try {
+      hint = contextArea(await getJSON(request2.origin + "/api/v1/context", comparisonReadPolicy.context_bytes, { fetcher, signal }));
+      report.lookup_area = { source: "lookup-request-ip", state: "available", ...hint, requested_at: now2(), measurement_attribution: "unverified" };
+    } catch (error) {
+      report.lookup_area = { source: "lookup-request-ip", state: "unavailable", failure: failure(error, invocationSignal, deadline) };
+    }
+  }
+  for (const scope2 of request2.scopes) {
+    const area = scope2 === "country" ? request2.country ?? hint?.country ?? null : scope2 === "nearby" ? request2.cell ?? hint?.cell ?? null : null;
+    const areaSource = scope2 === "world" ? null : (scope2 === "country" ? request2.country !== null : request2.cell !== null) ? request2.areaSource : area !== null ? "lookup-request-ip" : null;
+    const result = { scope: scope2, areaSource, area, evidence: null, completion: "interrupted", effective_filters: null, snapshot: null, loaded: { pages: 0, groups: 0, tests: 0 } };
+    report.scopes.push(result);
+    if (signal.aborted) {
+      result.failure = failure(signal.reason, invocationSignal, deadline);
+      continue;
+    }
+    if (scope2 !== "world" && area === null) {
+      result.failure = { code: "area-unavailable" };
+      continue;
+    }
+    const filters = { ...request2.cohort, group_by: scope2 === "nearby" ? "cell_network" : "country_network", country: scope2 === "country" ? area : null, cell_lat: scope2 === "nearby" ? area.cell_lat : null, cell_lon: scope2 === "nearby" ? area.cell_lon : null };
+    result.effective_filters = filters;
+    const visited = /* @__PURE__ */ new Set();
+    let url = comparisonURL(filters, request2.origin);
+    try {
+      for (let pageIndex = 0; pageIndex < request2.maxPagesPerScope; pageIndex++) {
+        signal.throwIfAborted();
+        if (visited.has(canonicalURL(url))) throw readError("continuation-loop");
+        visited.add(canonicalURL(url));
+        const body = await getJSON(url, comparisonReadPolicy.page_bytes, { fetcher, signal });
+        const page = comparisonPage(body, filters, request2.origin);
+        result.snapshot = appendComparison(result.snapshot, page);
+        result.evidence = result.snapshot.population.groups ? "observations" : "empty";
+        result.loaded = { pages: result.snapshot.pages, groups: result.snapshot.rows.length, tests: result.snapshot.rows.reduce((sum, row) => sum + row.tests, 0) };
+        if (!page.next) {
+          result.completion = "complete";
+          break;
+        }
+        if (visited.has(canonicalURL(page.next))) throw readError("continuation-loop");
+        if (page.continuation_expires_at <= now2()) throw readError("continuation-expired");
+        result.completion = "bounded";
+        url = page.next;
+      }
+    } catch (error) {
+      result.completion = "interrupted";
+      result.failure = failure(error, invocationSignal, deadline);
+    }
+  }
+  return report;
+}
+
+// src/domain/everyday-method.js
+var EVERYDAY_METHOD = Object.freeze({ id: "iqm-everyday-fresh-http-experimental-v1", destination: "loopback-fresh-https-deadline4900-v1", timeout_ms: 5e3, body_limit_bytes: 1024, attribution_ttl_ms: 1, max_variation_start_gap_ms: 300250 });
+var EVERYDAY_SCHEDULE = Object.freeze({ interval_ms: 3e5 });
+var EVERYDAY_REQUEST_METHOD = Object.freeze({ id: "iqm-everyday-fresh-http-experimental-v2", destination: "loopback-fresh-https-deadline4900-request-context-v2", timeout_ms: 5e3, body_limit_bytes: 1024, max_variation_start_gap_ms: 300250 });
+var EVERYDAY_CONTINUOUS_METHOD = Object.freeze({ id: "iqm-everyday-resident-https-v3", destination: "resident-https-deadline4900-request-context-v3", timeout_ms: 5e3, deadline_ms: 4900, body_limit_bytes: 1024, window_ms: 6e4, history_windows: 60, context_limit: 7, counter_interval_ms: 5e3, counter_offset_ms: 2500, connection_max_ms: 3e5, connection_max_requests: 60, histogram_upper_us: Object.freeze([0, 1e3, 2e3, 4e3, 8e3, 16e3, 32e3, 64e3, 1e5, 15e4, 25e4, 4e5, 64e4, 1e6, 16e5, 25e5, 4e6, 49e5]) });
+var EVERYDAY_CONTINUOUS_SCHEDULE = Object.freeze({ interval_ms: 5e3 });
+function everydayProfile(method = EVERYDAY_METHOD.id, placement = { value: "unknown", source: "unspecified" }) {
+  if (![EVERYDAY_METHOD.id, EVERYDAY_REQUEST_METHOD.id, EVERYDAY_CONTINUOUS_METHOD.id].includes(method) || !placement || Object.keys(placement).sort().join(",") !== "source,value" || !["unknown", "local", "cloud"].includes(placement.value) || !(placement.value === "unknown" ? placement.source === "unspecified" : ["user", "system"].includes(placement.source)) || method === EVERYDAY_METHOD.id && placement.value !== "unknown") throw new TypeError("invalid-method-profile");
+  return Object.freeze({ method, placement: Object.freeze({ ...placement }) });
+}
+
+// src/domain/everyday-public-response.js
+var PUBLIC_PATH = "/api/v3/everyday";
+var PUBLIC_POLICY = "public-everyday-quality-v3-1";
+var PUBLIC_METRICS = Object.freeze([
+  ["fresh_median_us", "fresh", 0.5, 20],
+  ["fresh_p95_us", "fresh", 0.95, 100],
+  ["setup_median_us", "setup", 0.5, 20],
+  ["setup_p95_us", "setup", 0.95, 100],
+  ["reused_median_us", "reused", 0.5, 120],
+  ["reused_p95_us", "reused", 0.95, 240],
+  ["variation_us", "variation", null, 120]
+].map(Object.freeze));
+var PUBLIC_LIMITS = Object.freeze({ members: 64, days: 1792, source_bytes: 176160768, candidates: 256, rows: 256, row_bytes: 2048, bytes: 524288, membership_bytes: 524288, floor: 10, min_days: 3, dates: 7 });
+var PUBLIC_UNSUPPORTED = Object.freeze({ regional_failure: "unavailable", regional_coverage: "unavailable", regional_traffic: "unavailable" });
+var PUBLIC_LIMITATIONS = Object.freeze([
+  "Timing is conditional on successful replies with usable request hints.",
+  "Intervals describe installation-balanced medians of daily summaries, not pooled request quantiles.",
+  "Membership floors are not anonymity or statistical significance guarantees.",
+  "Request hints and asserted placement do not attest location, provider, interface or route.",
+  "The 90-day membership audit excludes numeric inference, known others, cloned identities and copied expired releases."
+]);
+function publicCanonical(value) {
+  if (value === null || typeof value !== "object") return JSON.stringify(value);
+  if (Array.isArray(value)) return "[" + value.map(publicCanonical).join(",") + "]";
+  return "{" + Object.keys(value).sort().map((key) => JSON.stringify(key) + ":" + publicCanonical(value[key])).join(",") + "}";
+}
+var same = (a, b) => publicCanonical(a) === publicCanonical(b);
+var bytes = (value) => new TextEncoder().encode(value).length;
+function check(ok) {
+  if (!ok) throw new TypeError("Invalid everyday public response");
+}
+function exact(value, keys2) {
+  check(value !== null && typeof value === "object" && !Array.isArray(value) && Object.keys(value).sort().join(",") === [...keys2].sort().join(","));
+}
+function integer(value, low, high) {
+  check(Number.isSafeInteger(value) && value >= low && value <= high);
+}
+function cell(value) {
+  exact(value, ["cell_lat", "cell_lon"]);
+  integer(value.cell_lat, 0, 719);
+  integer(value.cell_lon, 0, 1439);
+}
+function publicWindow(epoch) {
+  integer(epoch, 0, 1e5);
+  const start = Date.UTC(2026, 0, 1) + epoch * 28 * 864e5;
+  return { start: new Date(start).toISOString().slice(0, 10), end: new Date(start + 28 * 864e5).toISOString().slice(0, 10) };
+}
+function validateEverydaySelection(value) {
+  const keys2 = ["area", "placement", ...Object.hasOwn(value, "asn") ? ["asn"] : []];
+  if (value.area === "country") keys2.push("country");
+  else if (value.area === "nearby") keys2.push("cell");
+  else check(value.area === "world");
+  exact(value, keys2);
+  check(["unknown", "local", "cloud"].includes(value.placement));
+  if (value.area === "country") check(typeof value.country === "string" && /^[A-Z]{2}$/.test(value.country));
+  if (value.area === "nearby") cell(value.cell);
+  if (Object.hasOwn(value, "asn")) integer(value.asn, 1, 4294967295);
+  return value;
+}
+function everydayURL(origin, selection, snapshotId = null) {
+  validateEverydaySelection(selection);
+  const url = new URL(origin);
+  check(["https:", "http:"].includes(url.protocol) && !url.username && !url.password && url.pathname === "/" && !url.search && !url.hash);
+  url.pathname = PUBLIC_PATH;
+  url.searchParams.set("area", selection.area);
+  url.searchParams.set("placement", selection.placement);
+  if (selection.area === "country") url.searchParams.set("country", selection.country);
+  if (selection.area === "nearby") for (const key of ["cell_lat", "cell_lon"]) url.searchParams.set(key, String(selection.cell[key]));
+  if (selection.asn !== void 0) url.searchParams.set("asn", String(selection.asn));
+  if (snapshotId !== null) {
+    check(/^[a-f0-9]{32}$/.test(snapshotId));
+    url.searchParams.set("snapshot", snapshotId);
+  }
+  return url.href;
+}
+function selectEverydayRows(rows, selection) {
+  validateEverydaySelection(selection);
+  return rows.filter((row) => row.context.placement.value === selection.placement && (selection.asn === void 0 || row.context.request_ip.asn === selection.asn) && (selection.area === "world" || selection.area === "country" && row.context.request_ip.country === selection.country || selection.area === "nearby" && same(row.context.request_ip.cell, selection.cell)));
+}
+function validateEverydayRows(rows) {
+  check(Array.isArray(rows) && rows.length <= PUBLIC_LIMITS.rows);
+  let previous = "";
+  for (const row of rows) {
+    exact(row, ["context", "metrics"]);
+    check(bytes(publicCanonical(row)) <= PUBLIC_LIMITS.row_bytes);
+    exact(row.context, ["request_ip", "placement"]);
+    everydayProfile(EVERYDAY_CONTINUOUS_METHOD.id, row.context.placement);
+    const hints = row.context.request_ip;
+    exact(hints, ["source", "country", "asn", "cell"]);
+    check(hints.source === "cloudflare-incoming-request-v1");
+    check(hints.country === null || typeof hints.country === "string" && /^[A-Z]{2}$/.test(hints.country));
+    if (hints.asn !== null) integer(hints.asn, 1, 4294967295);
+    if (hints.cell !== null) cell(hints.cell);
+    check(hints.country !== null || hints.asn !== null || hints.cell !== null);
+    const key = publicCanonical(row.context);
+    check(key > previous);
+    previous = key;
+    exact(row.metrics, PUBLIC_METRICS.map(([name]) => name));
+    let released = false;
+    for (const [name] of PUBLIC_METRICS) {
+      const metric = row.metrics[name];
+      if (metric === null) continue;
+      exact(metric, ["lower_us", "upper_us"]);
+      integer(metric.lower_us, 0, EVERYDAY_CONTINUOUS_METHOD.deadline_ms * 1e3);
+      integer(metric.upper_us, metric.lower_us, EVERYDAY_CONTINUOUS_METHOD.deadline_ms * 1e3);
+      check(metric.lower_us % 1e3 === 0 && metric.upper_us % 1e3 === 0);
+      released = true;
+    }
+    check(released);
+  }
+  return rows;
+}
+function parseEverydayObservation(text, expectedSelection, expectedSnapshot = null) {
+  check(typeof text === "string" && bytes(text) <= PUBLIC_LIMITS.bytes);
+  const value = JSON.parse(text);
+  exact(value, ["schema", "dataset", "policy", "method", "schedule", "probe_admission", "selection", "snapshot_id", "window", "next_publication_due", "expires_at", "freshness", "availability", "rows", "unsupported", "limitations"]);
+  check(value.schema === "iqm-everyday-public-v1" && value.dataset === "everyday-v3" && value.policy === PUBLIC_POLICY && same(value.method, EVERYDAY_CONTINUOUS_METHOD) && same(value.schedule, EVERYDAY_CONTINUOUS_SCHEDULE) && value.probe_admission === "scoped-probe-v1");
+  validateEverydaySelection(value.selection);
+  check(same(value.selection, expectedSelection));
+  check(same(value.unsupported, PUBLIC_UNSUPPORTED) && same(value.limitations, PUBLIC_LIMITATIONS));
+  validateEverydayRows(value.rows);
+  check(same(selectEverydayRows(value.rows, expectedSelection), value.rows));
+  check(value.availability === (value.rows.length ? "available" : "unavailable"));
+  if (value.snapshot_id === null) {
+    check(expectedSnapshot === null && value.window === null && value.next_publication_due === null && value.expires_at === null && value.freshness === "unavailable" && value.rows.length === 0);
+  } else {
+    check(/^[a-f0-9]{32}$/.test(value.snapshot_id) && (expectedSnapshot === null || value.snapshot_id === expectedSnapshot));
+    exact(value.window, ["start", "end"]);
+    const epoch = (Date.parse(value.window.start) - Date.UTC(2026, 0, 1)) / (28 * 864e5);
+    check(same(value.window, publicWindow(epoch)));
+    check(value.next_publication_due === Date.parse(value.window.end) + 31 * 864e5);
+    integer(value.expires_at, Date.parse(value.window.end) + 93 * 864e5, Date.parse(value.window.end) + 94 * 864e5);
+    check(["current", "stale"].includes(value.freshness));
+  }
+  return value;
+}
+
+// src/client/everyday-reader.mjs
+var everydayReadPolicy = Object.freeze({ deadline_ms: 2e4, request_ms: 5e3, context_bytes: 65536, snapshot_bytes: 524288 });
+var everydayFlags = ["everyday-only", "everyday-placement", "everyday-country", "everyday-cell-lat", "everyday-cell-lon", "everyday-area-source", "everyday-asn"];
+var validInteger = (value, max, min = 0) => /^(0|[1-9][0-9]*)$/.test(value ?? "") && Number(value) >= min && Number(value) <= max;
+function everydayRequest(options, seen) {
+  if (options["everyday-only"] === void 0) {
+    if (everydayFlags.some((flag) => seen.has("--" + flag))) throw new Error("Everyday selectors require --everyday-only.");
+    return null;
+  }
+  if ([...seen].some((flag) => !["--origin", "--plan", "--lookup-area", ...everydayFlags.map((flag2) => "--" + flag2)].includes(flag))) throw new Error("--everyday-only accepts everyday selectors, --lookup-area, --origin and --plan only.");
+  const scopes = options["everyday-only"].split(",");
+  if (!scopes.length || scopes.some((scope2) => !["nearby", "country", "world"].includes(scope2)) || new Set(scopes).size !== scopes.length) throw new Error("Everyday scopes must be a duplicate-free list of nearby,country,world.");
+  const placement = options["everyday-placement"];
+  if (!["unknown", "local", "cloud"].includes(placement)) throw new Error("Supply --everyday-placement unknown|local|cloud explicitly.");
+  const country = options["everyday-country"] ?? null;
+  if (country !== null && (!/^[A-Z]{2}$/.test(country) || !scopes.includes("country"))) throw new Error("Supply an uppercase country code for a country scope.");
+  const hasCell = options["everyday-cell-lat"] !== void 0 || options["everyday-cell-lon"] !== void 0;
+  if (hasCell && (!scopes.includes("nearby") || !validInteger(options["everyday-cell-lat"], 719) || !validInteger(options["everyday-cell-lon"], 1439))) throw new Error("Supply a valid everyday cell pair for nearby.");
+  const source = options["everyday-area-source"] ?? null;
+  if (hasCell || country !== null ? !["user", "system"].includes(source) : source !== null) throw new Error("Explicit everyday geography requires --everyday-area-source user|system.");
+  const asn = options["everyday-asn"];
+  if (asn !== void 0 && !validInteger(asn, 4294967295, 1)) throw new Error("Everyday ASN must be an exact positive integer.");
+  const lookupArea = options["lookup-area"] ?? "none";
+  if (!["none", "ip"].includes(lookupArea)) throw new Error("--lookup-area must be none or ip.");
+  return {
+    origin: options.origin,
+    scopes,
+    placement,
+    country,
+    cell: hasCell ? { cell_lat: Number(options["everyday-cell-lat"]), cell_lon: Number(options["everyday-cell-lon"]) } : null,
+    areaSource: source,
+    lookupArea,
+    ...asn === void 0 ? {} : { asn: Number(asn) }
+  };
+}
+function needsLookup2(request2) {
+  return request2.lookupArea === "ip" && request2.scopes.some((scope2) => scope2 === "country" && request2.country === null || scope2 === "nearby" && request2.cell === null);
+}
+function everydayPlan(request2) {
+  const context = Number(needsLookup2(request2));
+  const snapshots = request2.scopes.filter((scope2) => scope2 === "world" || context || (scope2 === "country" ? request2.country !== null : request2.cell !== null)).length;
+  return {
+    mode: "everyday-only",
+    requested: request2.scopes,
+    placement: request2.placement,
+    asn: request2.asn ?? null,
+    area: { country: request2.country, cell: request2.cell, source: request2.areaSource, lookup: request2.lookupArea },
+    bounds: { ...everydayReadPolicy, context_requests: context, snapshot_requests: snapshots, requests: context + snapshots, response_bytes: context * everydayReadPolicy.context_bytes + snapshots * everydayReadPolicy.snapshot_bytes, retries: 0, pagination: false, serial: true, excludes: "Protocol overhead, runtime buffers and bytes already in flight." },
+    endpoints: { everyday: request2.origin + "/api/v3/everyday", context: context ? request2.origin + "/api/v1/context" : null },
+    effects: { measurement: false, os_observation: false, helper_control: false, publication: false, credentials: false, output_reservation: false, disclosure: "HTTP requests disclose the selected coarse filters and request route. No private measurement is sent." }
+  };
+}
+function identity(value) {
+  return publicCanonical({ snapshot_id: value.snapshot_id, schema: value.schema, method: value.method, schedule: value.schedule, policy: value.policy, window: value.window, next_publication_due: value.next_publication_due, expires_at: value.expires_at });
+}
+function failure2(error, signal) {
+  return { code: signal.aborted ? "cancelled-or-deadline" : error.name === "TimeoutError" ? "request-timeout" : error.code ?? "invalid-response", ...error.http_status ? { http_status: error.http_status } : {} };
+}
+async function readEveryday(request2, { fetcher = fetch, signal: externalSignal } = {}) {
+  const deadline = AbortSignal.timeout(everydayReadPolicy.deadline_ms);
+  const signal = AbortSignal.any([deadline, ...externalSignal ? [externalSignal] : []]);
+  const report = {
+    schema_version: "iqm-everyday-reader-report-v1",
+    requested: request2.scopes,
+    bounds: everydayPlan(request2).bounds,
+    methodology: { unit: "installation-balanced daily summaries", personal_ranking: false, overlapping_scopes: "Never pool rows across scopes.", intervals: "Outward bounds in microseconds; divide both bounds by 1000 for milliseconds." },
+    lookup_area: { state: "not-needed", source: null },
+    scopes: []
+  };
+  let hint = null, pin = null, pinnedIdentity = null;
+  if (needsLookup2(request2)) {
+    try {
+      hint = contextArea(await getJSON(request2.origin + "/api/v1/context", everydayReadPolicy.context_bytes, { fetcher, signal }));
+      report.lookup_area = { state: "available", source: "lookup-request-ip", ...hint, attribution: "Search geography only, not measured location." };
+    } catch (error) {
+      report.lookup_area = { state: "unavailable", source: "lookup-request-ip", failure: failure2(error, signal) };
+    }
+  }
+  for (const scope2 of request2.scopes) {
+    const explicit = scope2 === "country" ? request2.country : scope2 === "nearby" ? request2.cell : null;
+    const area = explicit ?? (scope2 === "country" ? hint?.country : scope2 === "nearby" ? hint?.cell : null) ?? null;
+    const result = { scope: scope2, geography: { value: area, source: explicit !== null ? request2.areaSource : area !== null ? "lookup-request-ip" : null }, selection: null, availability: "unavailable", observation: null };
+    report.scopes.push(result);
+    if (scope2 !== "world" && area === null) {
+      result.failure = { code: "area-unavailable" };
+      continue;
+    }
+    const selection = { area: scope2, placement: request2.placement, ...scope2 === "country" ? { country: area } : scope2 === "nearby" ? { cell: area } : {}, ...request2.asn === void 0 ? {} : { asn: request2.asn } };
+    result.selection = selection;
+    try {
+      const body = await getJSON(everydayURL(request2.origin, selection, pin), everydayReadPolicy.snapshot_bytes, { fetcher, signal });
+      const observation = parseEverydayObservation(JSON.stringify(body), selection, pin);
+      if (pin !== null && identity(observation) !== pinnedIdentity) throw new TypeError("Changed immutable snapshot");
+      if (observation.snapshot_id !== null && pin === null) {
+        pin = observation.snapshot_id;
+        pinnedIdentity = identity(observation);
+      }
+      result.observation = observation;
+      result.availability = observation.snapshot_id === null ? "no-snapshot" : observation.availability === "available" ? "available" : "empty";
+    } catch (error) {
+      result.failure = failure2(error, signal);
+    }
+  }
+  return report;
+}
 
 // src/client/host-network.mjs
 import { execFile } from "node:child_process";
@@ -251,64 +1281,6 @@ var clientContextFields = Object.freeze({
 import { fileURLToPath } from "node:url";
 import { realpathSync } from "node:fs";
 
-// ../../packages/http-measurement/profiles.js
-var METHOD = "iqm-http-v1";
-var MiB = 1024 * 1024;
-var PROFILES = Object.freeze({
-  quick: Object.freeze({ baseline_ms: 2e3, load_ms: 5e3, max_download_bytes: 32 * MiB, max_upload_bytes: 8 * MiB }),
-  standard: Object.freeze({ baseline_ms: 3e3, load_ms: 8e3, max_download_bytes: 128 * MiB, max_upload_bytes: 32 * MiB }),
-  "extended-v1": Object.freeze({ baseline_ms: 3e3, load_ms: 8e3, max_download_bytes: 1024 * MiB, max_upload_bytes: 1024 * MiB })
-});
-var PROFILE_IDS = Object.freeze(Object.keys(PROFILES));
-var MAX_TRANSFER_BYTES = Math.max(...Object.values(PROFILES).flatMap((profile) => [profile.max_download_bytes, profile.max_upload_bytes]));
-var SCHEDULE = Object.freeze({ probe_interval_ms: 250, request_timeout_ms: 3e3, overall_ms: 3e4 });
-var TEST_ENDPOINTS = Object.freeze({ download: "https://speed.cloudflare.com/__down", upload: "https://speed.cloudflare.com/__up" });
-
-// ../../packages/http-measurement/summary.js
-function summarizePhase({ samples }) {
-  const values = samples.filter((sample) => sample.status === "ok").map((sample) => sample.elapsed_ms).sort((a, b) => a - b);
-  const differences = [];
-  const ordered = [...samples].sort((a, b) => a.sequence - b.sequence);
-  for (let i = 1; i < ordered.length; i++) {
-    const previous = ordered[i - 1];
-    const current = ordered[i];
-    if (previous.status === "ok" && current.status === "ok" && current.sequence === previous.sequence + 1) {
-      differences.push(Math.abs(current.elapsed_ms - previous.elapsed_ms));
-    }
-  }
-  const percentile = (fraction) => values.length ? values[Math.ceil(values.length * fraction) - 1] : null;
-  return {
-    sent: samples.length,
-    received: values.length,
-    failed: samples.length - values.length,
-    min_ms: values.length ? values[0] : null,
-    median_ms: percentile(0.5),
-    p95_ms: percentile(0.95),
-    max_ms: values.length ? values[values.length - 1] : null,
-    jitter_ms: differences.length ? differences.reduce((sum, value) => sum + value, 0) / differences.length : null
-  };
-}
-function summarizeMeasurement({ phases }) {
-  const [idle, download, upload] = phases;
-  const throughput2 = ({ transfer }) => transfer && transfer.bytes > 0 && transfer.elapsed_ms > 0 ? transfer.bytes * 8 / transfer.elapsed_ms / 1e3 : null;
-  return { download_mbps: throughput2(download), upload_mbps: throughput2(upload), idle: summarizePhase(idle), download: summarizePhase(download), upload: summarizePhase(upload) };
-}
-function loadEvidence({ phases }) {
-  return Object.fromEntries(phases.filter((phase) => phase.phase !== "idle").map(({ phase, transfer }) => [phase, {
-    bytes: transfer.bytes,
-    elapsed_ms: transfer.elapsed_ms,
-    termination: transfer.termination
-  }]));
-}
-function measurementQuality(measurement) {
-  const transfers = measurement.phases.filter((phase) => phase.transfer).map((phase) => phase.transfer);
-  return {
-    byte_capped: transfers.some((transfer) => transfer.termination === "byte_limit"),
-    failed_requests: transfers.reduce((total, transfer) => total + transfer.failed_requests, 0) + measurement.phases.reduce((total, phase) => total + phase.samples.filter((sample) => sample.status !== "ok").length, 0),
-    short_load: transfers.some((transfer) => transfer.elapsed_ms < PROFILES[measurement.profile].load_ms * 0.8)
-  };
-}
-
 // ../../packages/http-measurement/engine.js
 var now = () => performance.now();
 function abortError(message) {
@@ -365,9 +1337,9 @@ function endpointsFor(override) {
   }
   return result;
 }
-function downloadURL(endpoint, bytes, sequence) {
+function downloadURL(endpoint, bytes2, sequence) {
   const url = new URL(endpoint);
-  url.searchParams.set("bytes", String(bytes));
+  url.searchParams.set("bytes", String(bytes2));
   url.searchParams.set("iqm", String(sequence));
   return url.href;
 }
@@ -392,13 +1364,13 @@ async function request(url, init, parent, timeout, consume) {
 async function drainSmallReply(response, run) {
   if (!response.body) return;
   const reader = response.body.getReader();
-  let bytes = 0;
+  let bytes2 = 0;
   try {
     while (true) {
       const { done, value } = await reader.read();
       if (done) return;
-      bytes += value.byteLength;
-      if (bytes > 64 * 1024) {
+      bytes2 += value.byteLength;
+      if (bytes2 > 64 * 1024) {
         const error = new Error("Probe or upload response exceeded its 64 KiB limit.");
         run.stop(error);
         throw error;
@@ -429,9 +1401,9 @@ async function runPhase(name, config, schedule, endpoints, payload, run, progres
   };
   const probe = async (sequence) => {
     const began = now();
-    const status = await request(downloadURL(endpoints.download, 0, sequence), {}, run, schedule.request_timeout_ms, (response) => drainSmallReply(response, run));
-    if (status === "interrupted") return;
-    samples.push(status === "ok" ? { sequence, status, elapsed_ms: now() - began } : { sequence, status });
+    const status2 = await request(downloadURL(endpoints.download, 0, sequence), {}, run, schedule.request_timeout_ms, (response) => drainSmallReply(response, run));
+    if (status2 === "interrupted") return;
+    samples.push(status2 === "ok" ? { sequence, status: status2, elapsed_ms: now() - began } : { sequence, status: status2 });
   };
   const probes = async () => {
     const pending = [];
@@ -451,7 +1423,7 @@ async function runPhase(name, config, schedule, endpoints, payload, run, progres
       reserved += size;
       const began = now();
       let consumed = 0;
-      const status = await request(
+      const status2 = await request(
         name === "download" ? downloadURL(endpoints.download, size, serial++) : endpoints.upload,
         name === "download" ? {} : { method: "POST", headers: { "Content-Type": "application/octet-stream" }, body: payload.subarray(0, size) },
         phase,
@@ -479,15 +1451,15 @@ async function runPhase(name, config, schedule, endpoints, payload, run, progres
           }
         }
       );
-      if (status === "ok") {
+      if (status2 === "ok") {
         transfer.completed_requests++;
         if (name === "upload") transfer.bytes += size;
-      } else if (status !== "interrupted") transfer.failed_requests++;
+      } else if (status2 !== "interrupted") transfer.failed_requests++;
       if (name === "download") reserved -= Math.max(0, size - consumed);
       const elapsed = Math.max(1, now() - began);
       chunk = Math.max(64 * 1024, Math.min(name === "download" ? 8 * MiB : 4 * MiB, Math.ceil(size * 250 / elapsed)));
       report();
-      if (status !== "ok" && !phase.signal.aborted) await pause(schedule.probe_interval_ms, phase.signal);
+      if (status2 !== "ok" && !phase.signal.aborted) await pause(schedule.probe_interval_ms, phase.signal);
     }
   };
   try {
@@ -542,8 +1514,8 @@ async function runTestWithTiming({ profile = "quick", runtime, execution, networ
 var plugin_default = {
   $schema: "https://agent-plugins.org/schemas/1.0.0/plugin.schema.json",
   name: "internet-quality-map",
-  version: "0.7.0",
-  description: "Measure Internet responsiveness for agentic workflows and read community connection reports.",
+  version: "0.20.0",
+  description: "Investigate slow agent connections with authorized HTTP tests, shared interpretation, one-off comparisons and everyday timing intervals.",
   homepage: "https://internet-quality-map.nf-93f.workers.dev/",
   keywords: [
     "internet",
@@ -557,7 +1529,7 @@ var plugin_default = {
       interface: {
         displayName: "Internet Quality Map",
         shortDescription: "Test agent connectivity",
-        longDescription: "Read community reports, run a bounded connection test, and contribute a coarse-area result with consent.",
+        longDescription: "Troubleshoot connection waits or explore public observations. Run a bounded private test when authorized, interpret latency and jitter, and explore exact one-off cohorts or everyday timing intervals without testing. Publication needs separate consent.",
         category: "Developer Tools",
         capabilities: [
           "Read",
@@ -577,8 +1549,8 @@ var phaseNames = ["idle", "download", "upload"];
 var directions = ["download", "upload"];
 var sampleFloors = { idle: 4, download: 8, upload: 8 };
 var finite = (value) => Number.isFinite(value) && value >= 0 ? value : null;
-var count = (value) => Number.isSafeInteger(value) && value >= 0 ? value : null;
-var probeCount = (value) => count(value) !== null && value <= 128 ? value : null;
+var count2 = (value) => Number.isSafeInteger(value) && value >= 0 ? value : null;
+var probeCount = (value) => count2(value) !== null && value <= 128 ? value : null;
 var coverageReasonText = Object.freeze({
   "byte-cap": "A transfer reached its data budget. Short capped transfers do not establish a speed floor or sustained responsiveness.",
   "short-load": "A load phase ended before its planned duration.",
@@ -611,11 +1583,11 @@ function responsiveness(input = {}) {
     }];
   }));
   const transfers = directions.map((name) => evidence?.[name]);
-  const totalFailed = count(quality?.failed_requests);
+  const totalFailed = count2(quality?.failed_requests);
   const failures = totalFailed > 0 || phaseNames.some((name) => phases[name].failed > 0);
   const validEvidence = directions.every((name) => {
     const transfer = evidence?.[name];
-    return transfer && count(transfer.bytes) !== null && transfer.bytes <= (profile?.[`max_${name}_bytes`] ?? MAX_TRANSFER_BYTES) && finite(transfer.elapsed_ms) !== null && transfer.elapsed_ms > 0 && transfer.elapsed_ms <= 3e4 && ["time_limit", "byte_limit"].includes(transfer.termination);
+    return transfer && count2(transfer.bytes) !== null && transfer.bytes <= (profile?.[`max_${name}_bytes`] ?? MAX_TRANSFER_BYTES) && finite(transfer.elapsed_ms) !== null && transfer.elapsed_ms > 0 && transfer.elapsed_ms <= 3e4 && ["time_limit", "byte_limit"].includes(transfer.termination);
   });
   const conditions = {
     "byte-cap": quality?.byte_capped === true || transfers.some((transfer) => transfer?.termination === "byte_limit"),
@@ -658,12 +1630,12 @@ var metricDefinitions = Object.freeze({
 });
 
 // src/domain/interpretation.js
-var VERSION = "iqm-interpretation-v2";
+var VERSION = "iqm-interpretation-v3";
 var ABSOLUTE_CUE_MS = 250;
 var INCREASE_CUE_MS = 100;
 var phaseNames2 = ["idle", "download", "upload"];
 var phaseLabels = { idle: "Baseline", download: "Download", upload: "Upload" };
-var count2 = (value) => Number.isSafeInteger(value) && value >= 0 ? value : null;
+var count3 = (value) => Number.isSafeInteger(value) && value >= 0 ? value : null;
 var timing = (value) => Number.isFinite(value) && value >= 0 ? value : null;
 var milliseconds = (value) => Math.round(value * 10) / 10;
 function observationText(observation, findings, phases, reasons) {
@@ -673,38 +1645,80 @@ function observationText(observation, findings, phases, reasons) {
   const increaseContext = increases.length ? ` Sampled p95 replies took at least ${INCREASE_CUE_MS} ms longer during ${increases.map((finding) => finding.phase).join(" and ")} than before test traffic.` : "";
   if (observation === "failures-observed") return {
     headline: "Some test requests failed.",
-    description: `Failures occurred in this HTTP test. The successful timings do not include those failures.${increaseContext}${baselineContext}`,
-    action: { title: "Repeat the test and compare failures.", reason: "Change one condition, such as the device connection or other traffic, and check whether the failures recur." }
+    description: `Failures occurred in this HTTP test. The successful timings do not include those failures.${increaseContext}${baselineContext}`
   };
   if (observation === "increase-observed") return {
     headline: `Sampled replies were slower during ${increases[0].phase}.`,
-    description: `Before transfers, the slower end of successful replies was ${milliseconds(phases.idle.p95_ms)} ms. During ${increases[0].phase}, it was ${milliseconds(phases[increases[0].phase].p95_ms)} ms. Longer network waits can add pauses between repeated agent requests. This test does not measure coding task time.${baselineContext}`,
-    action: { title: "Repeat with one condition changed.", reason: "Compare the same phase after pausing other traffic or changing the device connection." }
+    description: `Before transfers, the slower end of successful replies was ${milliseconds(phases.idle.p95_ms)} ms. During ${increases[0].phase}, it was ${milliseconds(phases[increases[0].phase].p95_ms)} ms. Longer network waits can add pauses between repeated agent requests. This test does not measure coding task time.${baselineContext}`
   };
   if (observation === "long-responses-observed") return {
     headline: baselineContext ? "Replies were already long before test traffic." : `Long replies appeared during ${long[0].phase}.`,
-    description: baselineContext ? `Before transfers, the slower end of successful replies was ${milliseconds(phases.idle.p95_ms)} ms. Those waits were already present without traffic generated by this test.` : `During ${long[0].phase}, the slower end of successful replies was ${milliseconds(phases[long[0].phase].p95_ms)} ms. ${phases.idle.p95_ms === null ? "Baseline timing is unavailable, so an increase cannot be determined." : `Before transfers, it was ${milliseconds(phases.idle.p95_ms)} ms.`}`,
-    action: { title: "Compare another connection or time.", reason: "Repeat the same test with one condition changed and compare baseline and loaded timings." }
+    description: baselineContext ? `Before transfers, the slower end of successful replies was ${milliseconds(phases.idle.p95_ms)} ms. Those waits were already present without traffic generated by this test.` : `During ${long[0].phase}, the slower end of successful replies was ${milliseconds(phases[long[0].phase].p95_ms)} ms. ${phases.idle.p95_ms === null ? "Baseline timing is unavailable, so an increase cannot be determined." : `Before transfers, it was ${milliseconds(phases.idle.p95_ms)} ms.`}`
   };
   if (observation === "unavailable") return {
     headline: "Successful timing evidence is unavailable.",
-    description: "This reading has no usable successful HTTP p95 timings. Missing observations are not zero delay.",
-    action: { title: "Run another test.", reason: "A completed attempt with successful probes and counts is needed for timing comparisons." }
+    description: "This reading has no usable successful HTTP p95 timings. Missing observations are not zero delay."
   };
   if (observation === "limited-observation") {
     const missing = reasons.some((reason) => ["missing-quality", "missing-counts", "missing-timing", "missing-profile", "missing-load-evidence"].includes(reason));
     const zeroLoad = reasons.includes("zero-load");
     return {
       headline: missing ? "This reading lacks enough information for comparison." : zeroLoad ? "A transfer has no recorded payload." : "Too brief to judge a busy connection.",
-      description: missing ? "The available replies did not show a large delay, but missing information prevents a complete comparison." : zeroLoad ? "At least one load phase recorded zero consumed download or credited upload payload bytes. Successful probes alone cannot establish loaded coverage." : "The available replies did not show a large delay. The test was too limited to judge sustained behavior during transfers.",
-      action: { title: "Review the coverage details.", reason: "Compare phase counts, recorded payload, elapsed times, and transfer limits. Choose a suitable allowance before any separately authorized bounded test." }
+      description: missing ? "The available replies did not show a large delay, but missing information prevents a complete comparison." : zeroLoad ? "At least one load phase recorded zero consumed download or credited upload payload bytes. Successful probes alone cannot establish loaded coverage." : "The available replies did not show a large delay. The test was too limited to judge sustained behavior during transfers."
     };
   }
   return {
     headline: "No marked delay appeared in these samples.",
-    description: "This run did not show a large wait or a marked increase in slower replies. This does not rule out a slower individual response or predict future performance.",
-    action: { title: "Compare a repeat when work feels slow.", reason: "A reading taken during the problem can show whether the sampled HTTP timings also change." }
+    description: "This run did not show a large wait or a marked increase in slower replies. This does not rule out a slower individual response or predict future performance."
   };
+}
+function jitterExplanation(phases) {
+  const values = phaseNames2.map((name) => `${name === "idle" ? "Idle" : phaseLabels[name]} ${phases[name].jitter_ms === null ? "unavailable" : `${milliseconds(phases[name].jitter_ms)} ms`}`).join("; ");
+  return {
+    definition: "Jitter is the mean absolute timing change between adjacent successful HTTP probes. Failures and sequence gaps break adjacency.",
+    description: `${values}. More variation means less consistent sampled HTTP waits. Unavailable does not mean zero. This does not measure model processing or coding task duration.`
+  };
+}
+function diagnosticActions(findings, coverage, phases) {
+  const actions = [];
+  const unavailable = phaseNames2.every((name) => phases[name].p95_ms === null);
+  if (unavailable) actions.push({
+    id: "collect-timings",
+    title: "Collect usable timing evidence.",
+    reason: "Repeat on the same device with the same profile, changing one condition at a time. Successful probes and their counts are needed for timing comparisons. Missing readings do not mean zero delay."
+  });
+  if (findings.some((finding) => finding.kind === "request-failures")) actions.push({
+    id: "repeat-failures",
+    title: "Check whether the failures recur.",
+    reason: "Repeat on the same device with the same profile, changing one condition at a time, such as other traffic or the connection. Compare failures separately from successful timings. HTTP failures are not a packet-loss measurement."
+  });
+  const increase = findings.find((finding) => finding.kind === "p95-increase");
+  if (increase) actions.push({
+    id: increase.phase === "upload" ? "pause-uploads" : "pause-downloads",
+    title: increase.phase === "upload" ? "Pause cloud backups and uploads." : "Pause large downloads.",
+    reason: `${phaseLabels[increase.phase]} traffic coincided with ${milliseconds(increase.value_ms)} ms of added p95 delay. Pause background ${increase.phase}s and repeat on the same device with the same profile. Change one condition at a time and compare the same phase; this observation does not identify the cause.`
+  });
+  else if (findings.some((finding) => finding.kind === "long-p95")) actions.push({
+    id: "compare-connection",
+    title: "Compare another connection or time.",
+    reason: "Repeat on the same device with the same profile and change one condition at a time. If you use Wi-Fi or a VPN, compare that condition before attributing the observed waits to a router, provider or service."
+  });
+  if (coverage.reasons.length) actions.push({
+    id: "review-coverage",
+    title: "Review the coverage details.",
+    reason: "Compare phase counts, recorded payload, elapsed times, and transfer limits. Choose a suitable allowance before any separately authorized bounded test."
+  });
+  if (!actions.length) actions.push({
+    id: "repeat-during-slowdown",
+    title: "Compare a repeat when work feels slow.",
+    reason: "Use the same device and profile when the problem occurs. Change one condition at a time and compare idle, download and upload timings. Two readings do not establish a lasting change or its cause."
+  });
+  actions.push({
+    id: "check-agent-path",
+    title: "Check the affected app or agent path.",
+    reason: "Measure on the device running the affected app or agent. A cloud-hosted agent and a local browser can use different connections. When work feels slow, compare the actual provider or tool request timings. Cloudflare HTTP timings do not establish that service\u2019s latency, model processing time or task duration."
+  });
+  return actions;
 }
 function interpretConnection(input = {}) {
   const metrics = input?.metrics;
@@ -719,7 +1733,7 @@ function interpretConnection(input = {}) {
     }];
   }));
   const phaseValues = Object.values(phases);
-  const totalFailed = count2(quality?.failed_requests);
+  const totalFailed = count3(quality?.failed_requests);
   const probeFailed = phaseValues.every((phase) => phase.failed !== null) ? phaseValues.reduce((total, phase) => total + phase.failed, 0) : null;
   const failures = totalFailed > 0 || phaseValues.some((phase) => phase.failed > 0);
   const increases = phaseNames2.filter((name) => name !== "idle" && phases[name].increase_ms >= INCREASE_CUE_MS).map((phase) => ({ kind: "p95-increase", phase, value_ms: phases[phase].increase_ms })).sort((a, b) => b.value_ms - a.value_ms || phaseNames2.indexOf(a.phase) - phaseNames2.indexOf(b.phase));
@@ -740,10 +1754,14 @@ function interpretConnection(input = {}) {
     ...phaseNames2.filter((name) => phases[name].p95_is_max === true).map((name) => `${phaseLabels[name]} p95 is the largest successful timing because there were fewer than 20 successful probes.`),
     "HTTP throughput is the achieved transfer rate. This test does not prove network saturation or sustained performance."
   ];
+  const actions = diagnosticActions(findings, coverage, phases);
   return {
     version: VERSION,
     observation,
     ...observationText(observation, findings, phases, reasons),
+    jitter: jitterExplanation(phases),
+    actions,
+    action: { title: actions[0].title, reason: actions[0].reason },
     coverage,
     findings,
     phases,
@@ -760,16 +1778,16 @@ var OutputFileError = class extends Error {
 };
 async function reserveOutput(filename) {
   const path = resolve(filename);
-  let identity;
+  let identity2;
   let currentFile;
   let completed = false;
   const ownsPath = async () => {
     const current = await lstat(path);
-    return current.isFile() && current.dev === identity.dev && current.ino === identity.ino;
+    return current.isFile() && current.dev === identity2.dev && current.ino === identity2.ino;
   };
   try {
     currentFile = await open(path, "wx", 384);
-    identity = await currentFile.stat();
+    identity2 = await currentFile.stat();
   } catch {
     await currentFile?.close();
     throw new OutputFileError("Cannot reserve output path. Choose a new file in a writable private directory. Existing files and symlinks are refused.");
@@ -788,7 +1806,7 @@ async function reserveOutput(filename) {
         await currentFile.close();
         currentFile = file;
         file = null;
-        identity = nextIdentity;
+        identity2 = nextIdentity;
         completed = true;
       } catch {
         throw new OutputFileError("Cannot save output artifact. Publication stops. Inspect the reserved output path before retrying.");
@@ -846,14 +1864,40 @@ node client.mjs --origin https://internet-quality-map.nf-93f.workers.dev [option
                                      Includes sourced client context and network details.
 --location ip|none                   Required with --publish. IP adds an approximate public area.
 --cell-lat N --cell-lon N            Optional coarse 0.25-degree device-supplied cell instead.
+--everyday-directory PATH           Select one existing helper installation for settled load exclusion.
+                                     Discovery never creates or starts a helper. Unavailable owners block load.
 --output PATH                        Save a private artifact before publication. Requires a new path.
+--compare SCOPES                     Read public aggregates after the test. nearby,country,world.
+--everyday-only SCOPES               Read everyday nearby,country,world. No test or helper effects.
+--everyday-placement unknown|local|cloud  Required exact background placement.
+--everyday-country XX                Country selector with independent geography source.
+--everyday-cell-lat N --everyday-cell-lon N  Exact nearby cell indices.
+--everyday-area-source user|system   Required for explicit everyday geography.
+--everyday-asn N                     Optional exact positive ASN.
+--comparisons-only SCOPES            Read only. No test, OS observation, output file or publication.
+--lookup-area none|ip                Default none. IP permits one needed request-area lookup.
+--comparison-country XX|unknown      Country scope selector, separate from measured location.
+--comparison-cell-lat N --comparison-cell-lon N  Exact nearby cell indices.
+--comparison-area-source user|system Required for explicit geography.
+--comparison-asn N|unknown           Optional exact ASN. Context ASN never selects this.
+--comparison-placement unknown|local|cloud  Default unknown historical placement.
+--comparison-attribution session|measurement  Default session historical attribution.
+--comparison-location-source ip|device|none  Default ip. Nearby excludes none.
+--comparison-runtime node|browser    Lookup-only. Default node.
+--comparison-execution agent-host|this-device  Lookup-only. Default agent-host.
+--comparison-pages 1|2|3             Maximum pages per scope. Default 1.
+--host-placement unknown|local|cloud Test comparison target claim. Default unknown.
+--host-placement-source user|system Required for known placement. Never inferred.
 --version                            Print the client release without network requests.
 --help                               Show this text without network requests.
 
 Node.js 24 or later is required. The timed test deadline is 30 seconds.
-OS observation can add 5.3 seconds. Publication can add three requests of up to 15 seconds each.
+Helper coordination and exclusion can add 8 seconds on macOS and Linux. Authorized measurement temporarily listens on loopback; help and plan do not. OS observation can add 5.3 seconds. Publication can add three requests of up to 15 seconds each.
 Exit 0 means a completed observation, including failed probes. Exit 1 means a CLI, execution, or storage error.
 Exit 2 means publication failed or remains unknown. A pending artifact may already have been published.
+Comparison reads add at most 20 seconds, with serial 5-second requests, 64 KiB context and 512 KiB pages.
+Comparison-only exits 0 for at least one validated snapshot, 3 for none. Inspect each scope.
+Comparisons are descriptive, not peer rankings; optional failures do not change test exits.
 Publication checks exit 0 for confirmed, 2 for not_found or unknown, and 1 for invalid invocation.
 A not_found check describes this service at check time. It does not establish permanent absence.
 Published time is a UTC day. No precise GPS, hostname, or IP is stored in public results.
@@ -868,7 +1912,8 @@ Elapsed duration does not prove saturation or full probe overlap with traffic.
 function parseArguments(args) {
   if (args.includes("--ack-payload-bytes") && (args.includes("--help") || args.includes("--version"))) throw new Error("--ack-payload-bytes cannot be combined with --help or --version.");
   const options = { origin: "https://internet-quality-map.nf-93f.workers.dev", profile: "quick", networkType: "unknown", execution: "agent-host", publish: false, location: null };
-  const values = /* @__PURE__ */ new Map([["--origin", "origin"], ["--profile", "profile"], ["--network-type", "networkType"], ["--execution", "execution"], ["--location", "location"], ["--cell-lat", "cellLat"], ["--cell-lon", "cellLon"], ["--output", "output"], ["--check-publication", "checkPublication"], ["--ack-payload-bytes", "ackPayloadBytes"]]);
+  const values = /* @__PURE__ */ new Map([["--origin", "origin"], ["--profile", "profile"], ["--network-type", "networkType"], ["--execution", "execution"], ["--location", "location"], ["--cell-lat", "cellLat"], ["--cell-lon", "cellLon"], ["--output", "output"], ["--everyday-directory", "everydayDirectory"], ["--check-publication", "checkPublication"], ["--ack-payload-bytes", "ackPayloadBytes"]]);
+  for (const flag of [...comparisonFlags, ...everydayFlags]) values.set("--" + flag, flag);
   values.set("--device-type", "deviceType");
   values.set("--device-type-source", "deviceTypeSource");
   for (const flag of ["network-type-source", "internet-service", "internet-service-source", "wifi-standard", "wifi-standard-source", "wifi-band", "wifi-band-source"]) values.set("--" + flag, flag);
@@ -906,6 +1951,7 @@ function parseArguments(args) {
     if (!Object.hasOwn(clientContextFields.device_type.values, options.deviceType) || !["user", "system"].includes(options.deviceTypeSource)) throw new Error("Supply a known --device-type and --device-type-source user|system.");
     options.clientContext = { device_type: { value: options.deviceType, source: options.deviceTypeSource } };
   }
+  if (options.everydayDirectory !== void 0 && (!options.everydayDirectory.trim() || options.everydayDirectory.includes("\0"))) throw new Error("--everyday-directory requires a nonempty path.");
   if (options.output !== void 0 && (!options.output.trim() || options.output.includes("\0"))) throw new Error("--output requires a nonempty file path.");
   if (options.networkInfo && [...seen].some((flag) => !["--network-info", "--no-network-detection"].includes(flag))) throw new Error("--network-info cannot be combined with test or publication options.");
   if (options.checkPublication !== void 0) {
@@ -919,7 +1965,7 @@ function parseArguments(args) {
   if (!Object.hasOwn(PROFILES, options.profile)) throw new Error("Profile must be " + Object.keys(PROFILES).join(", ") + ".");
   const totalBytes = PROFILES[options.profile].max_download_bytes + PROFILES[options.profile].max_upload_bytes;
   if (options.ackPayloadBytes !== void 0 && options.ackPayloadBytes !== String(totalBytes)) throw new Error("--ack-payload-bytes must equal the canonical integer " + totalBytes + " for this profile.");
-  if (options.profile === "extended-v1" && !options.plan && options.ackPayloadBytes === void 0) throw new Error("Extended execution requires --ack-payload-bytes " + totalBytes + " and explicit authorization for this payload allowance.");
+  if (options.profile === "extended-v1" && options["comparisons-only"] === void 0 && !options.plan && options.ackPayloadBytes === void 0) throw new Error("Extended execution requires --ack-payload-bytes " + totalBytes + " and explicit authorization for this payload allowance.");
   if (!["wifi", "cellular", "wired", "unknown"].includes(options.networkType)) throw new Error("Invalid network type.");
   if (!["this-device", "agent-host"].includes(options.execution)) throw new Error("Invalid execution context.");
   if (options.location !== null && !["ip", "none"].includes(options.location)) throw new Error("Location must be ip or none.");
@@ -953,13 +1999,24 @@ function parseArguments(args) {
     if (error) throw new Error(error);
     options.networkDetails = details;
   }
+  const everyday = everydayRequest(options, seen);
+  if (everyday) {
+    options.everyday = everyday;
+    return options;
+  }
+  const comparison = comparisonRequest(options, seen);
+  if (comparison) options.comparison = comparison;
   return options;
 }
 function executionPlan(options) {
+  if (options.everyday) return { schema_version: "iqm-everyday-plan-v1", client_version: CLIENT_VERSION, everyday: everydayPlan(options.everyday), plan_effects: { network_requests: 0, os_commands: 0, file_writes: 0 } };
+  const comparisons = options.comparison ? comparisonPlan(options.comparison) : null;
+  if (options.comparison?.mode === "lookup-only") return { schema_version: "iqm-comparison-plan-v1", client_version: CLIENT_VERSION, comparisons, plan_effects: { network_requests: 0, os_commands: 0, file_writes: 0 } };
   const profile = PROFILES[options.profile];
   const automatic = !options.networkTypeExplicit && options.networkDetection !== false;
   const observation = automatic ? 5300 : 0;
   const publishing = options.publish ? 3 * PUBLICATION_TIMEOUT_MS : 0;
+  const coordination = helperSupported() ? HELPER_COORDINATION.deadline_ms : 0;
   return {
     schema_version: "iqm-execution-plan-v1",
     client_version: CLIENT_VERSION,
@@ -970,7 +2027,8 @@ function executionPlan(options) {
     endpoints: { probe: TEST_ENDPOINTS.download, ...TEST_ENDPOINTS },
     payload_budgets: { download_bytes: profile.max_download_bytes, upload_bytes: profile.max_upload_bytes, total_bytes: profile.max_download_bytes + profile.max_upload_bytes, excludes: "HTTP probe and protocol overhead" },
     payload_acknowledgement: { required_for_execution: options.profile === "extended-v1", flag: "--ack-payload-bytes", value: String(profile.max_download_bytes + profile.max_upload_bytes), supplied: options.ackPayloadBytes !== void 0 },
-    timing_bounds: { measurement_ms: 3e4, os_before_ms: automatic ? 3500 : 0, os_after_ms: automatic ? 1800 : 0, publication_requests: options.publish ? 3 : 0, publication_request_ms: PUBLICATION_TIMEOUT_MS, end_to_end_ms: 3e4 + observation + publishing, excludes: "Process startup, filesystem work, and scheduling delays" },
+    timing_bounds: { measurement_ms: 3e4, os_before_ms: automatic ? 3500 : 0, os_after_ms: automatic ? 1800 : 0, publication_requests: options.publish ? 3 : 0, publication_request_ms: PUBLICATION_TIMEOUT_MS, helper_control_ms: EVERYDAY_CONTROL_POLICY.measurement_requests * EVERYDAY_CONTROL_POLICY.request_deadline_ms, helper_coordination_ms: coordination, end_to_end_ms: 3e4 + coordination + EVERYDAY_CONTROL_POLICY.measurement_requests * EVERYDAY_CONTROL_POLICY.request_deadline_ms + observation + publishing + (comparisons?.bounds.deadline_ms ?? 0), excludes: "Process startup, filesystem work, and scheduling delays" },
+    helper_exclusion: { coordination: { temporary_loopback_listeners: helperSupported() ? HELPER_COORDINATION.quorum : 0, deadline_ms: coordination, persistent_writes: false }, requests: EVERYDAY_CONTROL_POLICY.measurement_requests, request_deadline_ms: EVERYDAY_CONTROL_POLICY.request_deadline_ms, message_bytes: EVERYDAY_CONTROL_POLICY.message_bytes, installation: options.everydayDirectory ?? "default-private-installation", discovery: "At measurement only; no creation or start", unavailable: "Blocks generated load", release: "Leaves collection paused; explicit resume required" },
     os_observation: { enabled: automatic, dns_hostname: automatic ? "speed.cloudflare.com" : null, raw_identifiers_in_output: false, provenance: "OS observations, not hardware attestation" },
     client_context: { automatic: options.networkDetection !== false, fields: ["operating_system", "architecture", "runtime_version"], supplied: options.clientContext || null, device_type: "Only when explicitly supplied with its source" },
     output: { path: options.output ?? null, requires_new_path: Boolean(options.output), saved_before_publication: Boolean(options.output && options.publish) },
@@ -979,10 +2037,16 @@ function executionPlan(options) {
       location: options.publish ? options.cellLat !== void 0 ? { source: "device", cell_lat: options.cellLat, cell_lon: options.cellLon } : { source: options.location } : null,
       endpoints: options.publish ? { session: options.origin + "/api/v1/sessions", submit: options.origin + "/api/v1/results", confirmation: options.origin + "/api/v1/results/{id}" } : null
     },
+    ...comparisons ? { comparisons } : {},
     plan_effects: { network_requests: 0, os_commands: 0, file_writes: 0 }
   };
 }
-async function responseJSON(response) {
+async function responseJSON(response, signal) {
+  if (signal?.aborted) {
+    await response.body?.cancel().catch(() => {
+    });
+    signal.throwIfAborted();
+  }
   const declared = response.headers.get("content-length");
   if (declared !== null && /^\d+$/.test(declared) && Number(declared) > JSON_RESPONSE_BYTES) {
     await response.body?.cancel().catch(() => {
@@ -991,22 +2055,30 @@ async function responseJSON(response) {
   }
   if (!response.body) throw new Error("JSON response body is missing.");
   const reader = response.body.getReader();
+  const cancel = () => {
+    void reader.cancel().catch(() => {
+    });
+  };
+  signal?.addEventListener("abort", cancel, { once: true });
   const chunks = [];
-  let bytes = 0;
+  let bytes2 = 0;
   try {
     while (true) {
+      signal?.throwIfAborted();
       const { done, value } = await reader.read();
+      signal?.throwIfAborted();
       if (done) break;
-      bytes += value.byteLength;
-      if (bytes > JSON_RESPONSE_BYTES) throw new Error("JSON response exceeded its byte limit.");
+      bytes2 += value.byteLength;
+      if (bytes2 > JSON_RESPONSE_BYTES) throw new Error("JSON response exceeded its byte limit.");
       chunks.push(value);
     }
-    return JSON.parse(Buffer.concat(chunks, bytes).toString("utf8"));
+    return JSON.parse(Buffer.concat(chunks, bytes2).toString("utf8"));
   } catch (error) {
     await reader.cancel().catch(() => {
     });
     throw error;
   } finally {
+    signal?.removeEventListener("abort", cancel);
     reader.releaseLock();
   }
 }
@@ -1031,14 +2103,14 @@ async function checkPublication(options, fetcher = fetch) {
   }
   return output;
 }
-async function receiptFromResponse(response, session) {
+async function receiptFromResponse(response, session, signal) {
   if (!response.ok) {
     await response.body?.cancel().catch(() => {
     });
     return null;
   }
   try {
-    const body = await responseJSON(response);
+    const body = await responseJSON(response, signal);
     if (body?.result?.id !== session.id || body.id !== void 0 && body.id !== session.id || JSON.stringify(body.result).includes(session.token)) return null;
     return { published: true, id: session.id, result: body.result };
   } catch {
@@ -1046,13 +2118,18 @@ async function receiptFromResponse(response, session) {
   }
 }
 async function publishMeasurement(options, measurement, fetcher = fetch, onSession = async () => {
-}) {
+}, signal) {
+  const requestSignal = () => {
+    signal?.throwIfAborted();
+    return AbortSignal.any([AbortSignal.timeout(PUBLICATION_TIMEOUT_MS), ...signal ? [signal] : []]);
+  };
   let session;
+  let activeSignal;
   try {
     const response2 = await fetcher(options.origin + "/api/v1/sessions", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      signal: AbortSignal.timeout(PUBLICATION_TIMEOUT_MS),
+      signal: activeSignal = requestSignal(),
       redirect: "error",
       body: JSON.stringify({ profile: measurement.profile, runtime: measurement.runtime })
     });
@@ -1061,7 +2138,7 @@ async function publishMeasurement(options, measurement, fetcher = fetch, onSessi
       });
       throw new Error();
     }
-    session = await responseJSON(response2);
+    session = await responseJSON(response2, activeSignal);
   } catch {
     throw new Error("Could not create a publishing session.");
   }
@@ -1075,7 +2152,7 @@ async function publishMeasurement(options, measurement, fetcher = fetch, onSessi
     response = await fetcher(options.origin + "/api/v1/results", {
       method: "POST",
       headers: { "Content-Type": "application/json", Authorization: "Bearer " + session.token },
-      signal: AbortSignal.timeout(PUBLICATION_TIMEOUT_MS),
+      signal: activeSignal = requestSignal(),
       redirect: "error",
       body: JSON.stringify({ consent: "public-map-v1", measurement, location, ...options.networkDetails ? { network_details: options.networkDetails } : {}, ...options.clientContext ? { client_context: options.clientContext } : {} })
     });
@@ -1084,7 +2161,7 @@ async function publishMeasurement(options, measurement, fetcher = fetch, onSessi
   if (response?.status >= 400 && response.status < 500) {
     let code;
     try {
-      const body = await responseJSON(response);
+      const body = await responseJSON(response, activeSignal);
       if (["invalid_session", "invalid_schema", "invalid_json", "body_too_large", "session_mismatch", "rate_limited", "daily_quota", "publication_conflict"].includes(body?.error?.code)) code = body.error.code;
     } catch {
     }
@@ -1093,17 +2170,17 @@ async function publishMeasurement(options, measurement, fetcher = fetch, onSessi
     throw error;
   }
   if (response) {
-    const receipt = await receiptFromResponse(response, session);
-    if (receipt) return receipt;
+    const receipt2 = await receiptFromResponse(response, session, activeSignal);
+    if (receipt2) return receipt2;
   }
   try {
     const readback = await fetcher(options.origin + "/api/v1/results/" + session.id, {
-      signal: AbortSignal.timeout(PUBLICATION_TIMEOUT_MS),
+      signal: activeSignal = requestSignal(),
       cache: "no-store",
       redirect: "error"
     });
-    const receipt = await receiptFromResponse(readback, session);
-    if (receipt) return receipt;
+    const receipt2 = await receiptFromResponse(readback, session, activeSignal);
+    if (receipt2) return receipt2;
   } catch {
   }
   return { published: null, id: session.id, error: "Publication status is unknown. Check the result link before publishing again." };
@@ -1142,54 +2219,82 @@ async function main(args = process.argv.slice(2), { measure = runTest, fetcher =
     if (checked.status !== "confirmed") process.exitCode = 2;
     return;
   }
-  options.clientContext = nodeClientContext(options);
-  const artifact = options.output ? await reserveOutput(options.output) : null;
+  const controller = new AbortController();
+  const stop = () => controller.abort();
+  process.once("SIGINT", stop);
+  process.once("SIGTERM", stop);
+  let artifact, exclusion;
   try {
-    const controller = new AbortController();
-    const stop = () => controller.abort();
-    process.once("SIGINT", stop);
-    process.once("SIGTERM", stop);
-    let measurement;
-    try {
-      const resolved = await withNetworkContext(options, (context) => measure({ profile: options.profile, runtime: "node", execution: options.execution, networkType: context.networkType, signal: controller.signal }), { observe, signal: controller.signal });
-      if (options.networkInfo) {
-        write(JSON.stringify({ ...resolved, ...options.clientContext ? { client_context: options.clientContext } : {} }, null, 2) + "\n");
-        return;
-      }
-      measurement = resolved.measurement;
-      options.networkDetails = resolved.networkDetails;
-    } finally {
-      process.removeListener("SIGINT", stop);
-      process.removeListener("SIGTERM", stop);
+    if (options.everyday) {
+      const everyday = await readEveryday(options.everyday, { fetcher, signal: controller.signal });
+      write(JSON.stringify({ schema_version: "iqm-everyday-output-v1", client_version: CLIENT_VERSION, everyday }, null, 2) + "\n");
+      if (!everyday.scopes.some((scope2) => scope2.observation?.snapshot_id)) process.exitCode = 3;
+      return;
     }
+    if (options.comparison?.mode === "lookup-only") {
+      const comparisons = await readComparisons(options.comparison, { fetcher, signal: controller.signal });
+      write(JSON.stringify({ schema_version: "iqm-comparison-output-v1", client_version: CLIENT_VERSION, comparisons }, null, 2) + "\n");
+      if (!comparisons.scopes.some((scope2) => scope2.snapshot !== null)) process.exitCode = 3;
+      return;
+    }
+    options.clientContext = nodeClientContext(options);
+    artifact = options.output ? await reserveOutput(options.output) : null;
+    const resolved = await withNetworkContext(options, async (context) => {
+      const { excludeExistingEveryday: excludeExistingEveryday2 } = await Promise.resolve().then(() => (init_everyday_control2(), everyday_control_exports));
+      exclusion = await excludeExistingEveryday2({ directory: options.everydayDirectory, signal: controller.signal });
+      exclusion.signal?.throwIfAborted();
+      return measure({ profile: options.profile, runtime: "node", execution: options.execution, networkType: context.networkType, signal: exclusion.signal });
+    }, { observe, signal: controller.signal });
+    if (options.networkInfo) {
+      write(JSON.stringify({ ...resolved, ...options.clientContext ? { client_context: options.clientContext } : {} }, null, 2) + "\n");
+      return;
+    }
+    const measurement = resolved.measurement;
+    options.networkDetails = resolved.networkDetails;
     const output = { schema_version: OUTPUT_SCHEMA_VERSION, client_version: CLIENT_VERSION, method: METHOD, profile: measurement.profile, load_evidence: loadEvidence(measurement), measurement, ...options.networkDetails ? { network_details: options.networkDetails } : {}, ...options.clientContext ? { client_context: options.clientContext } : {}, metrics: summarizeMeasurement(measurement), quality: measurementQuality(measurement), published: options.publish ? null : false, publication: { status: options.publish ? "pending" : "private" } };
+    output.helper_exclusion = { status: exclusion.status };
     output.interpretation = interpretConnection(output);
+    if (options.comparison) output.comparisons = { schema_version: "iqm-comparison-report-v1", status: "pending", ...comparisonPlan(options.comparison) };
+    await artifact?.save(output);
+    output.helper_exclusion = await exclusion.finish();
     await artifact?.save(output);
     if (options.publish) {
       try {
-        const receipt = await publishMeasurement(options, measurement, fetcher, async (id) => {
+        const receipt2 = await publishMeasurement(options, measurement, fetcher, async (id) => {
           output.publication = { status: "pending", id, url: options.origin + "/?result=" + encodeURIComponent(id) };
           await artifact?.save(output);
-        });
-        output.published = receipt.published;
-        output.publication = { status: receipt.published ? "confirmed" : "unknown", id: receipt.id, url: options.origin + "/?result=" + encodeURIComponent(receipt.id), ...receipt.result ? { result: receipt.result } : {} };
-        if (receipt.published === null) {
-          output.publication_error = receipt.error;
+        }, controller.signal);
+        output.published = receipt2.published;
+        output.publication = { status: receipt2.published ? "confirmed" : "unknown", id: receipt2.id, url: options.origin + "/?result=" + encodeURIComponent(receipt2.id), ...receipt2.result ? { result: receipt2.result } : {} };
+        if (receipt2.published === null) {
+          output.publication_error = receipt2.error;
           process.exitCode = 2;
         }
       } catch (error) {
         if (error instanceof OutputFileError) throw error;
-        output.published = false;
-        output.publication.status = "failed";
+        const uncertain = controller.signal.aborted && output.publication.id;
+        output.published = uncertain ? null : false;
+        output.publication.status = uncertain ? "unknown" : "failed";
         output.publication_error = error.message;
         if (error.code) output.publication_error_code = error.code;
         process.exitCode = 2;
       }
       await artifact?.save(output);
     }
+    if (options.comparison) {
+      output.comparisons = await readComparisons(options.comparison, { fetcher, signal: controller.signal });
+      await artifact?.save(output);
+    }
     write(JSON.stringify(output, null, 2) + "\n");
   } finally {
-    await artifact?.close();
+    await exclusion?.finish().catch(() => {
+    });
+    try {
+      await artifact?.close();
+    } finally {
+      process.removeListener("SIGINT", stop);
+      process.removeListener("SIGTERM", stop);
+    }
   }
 }
 if (process.argv[1] && realpathSync(process.argv[1]) === realpathSync(fileURLToPath(import.meta.url))) {
