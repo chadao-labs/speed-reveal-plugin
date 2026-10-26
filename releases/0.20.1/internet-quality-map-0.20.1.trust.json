@@ -1,0 +1,395 @@
+{
+  "schema_version": "iqm-release-trust-v2",
+  "entrypoints": {
+    "client": {
+      "package_path": "skills/internet-quality/scripts/client.mjs",
+      "sha256": "67e5453d3197f4f61139bf33885fd5c40935ae31fc1fb3f21bedba1142458f30",
+      "minimum_node_major": 24,
+      "external_npm_modules": [],
+      "builtin_imports": [
+        "node:child_process",
+        "node:crypto",
+        "node:fs",
+        "node:fs/promises",
+        "node:net",
+        "node:os",
+        "node:path",
+        "node:url"
+      ],
+      "authored_inputs": [
+        {
+          "path": "packages/http-measurement/engine.js",
+          "sha256": "b7811f742f70609778b248ff7285dcffbff6c961942d8136f082edd0f6b9df3f"
+        },
+        {
+          "path": "packages/http-measurement/index.js",
+          "sha256": "3541d1257cc3fd98adc1847ca8d32d82985db11e47b2aa64760ac99094ea430c"
+        },
+        {
+          "path": "packages/http-measurement/profiles.js",
+          "sha256": "48fa7ffdea388adab8d36394dd400598e5a99711d2f0f6822d1db10eeb4cc965"
+        },
+        {
+          "path": "packages/http-measurement/summary.js",
+          "sha256": "71bc02283f69f8231516c7ad90b4486968ab8e370c0620b69dab6f3b0f99a0b8"
+        },
+        {
+          "path": "plugin.json",
+          "sha256": "ab65e4e4435500b4b7ad05f8ee192d2b7c257ae6896527650414e1714f831ed2"
+        },
+        {
+          "path": "src/client/agent.mjs",
+          "sha256": "ce7722d8d7ab2042c9d3f9459bc150a7026f57982e752d4e25e624848ec21845"
+        },
+        {
+          "path": "src/client/client-output.mjs",
+          "sha256": "160589ebfea65bf481aa01885d9a0038d21dabe706df46d2ec86b788da62fae3"
+        },
+        {
+          "path": "src/client/comparison-reader.mjs",
+          "sha256": "1dbf8ff042f0bdd06ef39d9e30aa553a305235ef3a73406f1aa8bceb125a1d8d"
+        },
+        {
+          "path": "src/client/everyday-control.mjs",
+          "sha256": "7512fca1a8e14e135f140ceb50a079246591c8ead2718d4ab3c1f85d054071ed"
+        },
+        {
+          "path": "src/client/everyday-reader.mjs",
+          "sha256": "2ac5e0f7de0668f3812021194bc4fc1ede4e5e21ced3422f130359909b46f5e4"
+        },
+        {
+          "path": "src/client/helper-coordination.mjs",
+          "sha256": "0e64660dd2117f031f239b829c88e219d2247f21ec3a55c28d98311ffdb65f96"
+        },
+        {
+          "path": "src/client/host-network.mjs",
+          "sha256": "48178c6cf8d6223e4a37d0508b87ad2434a5e8011dc8c3474af28572a156eeb2"
+        },
+        {
+          "path": "src/domain/client-context.js",
+          "sha256": "1382e2a0eb2f167a726683e8833f05b96d51fa8e5d124912dcef052b68bea4f3"
+        },
+        {
+          "path": "src/domain/comparison-response.js",
+          "sha256": "14f5fc555aa1e251fca18c98cc5c9ea475f87c058a1cf1530ddaae3a3eb51c8c"
+        },
+        {
+          "path": "src/domain/comparisons.js",
+          "sha256": "7b0d6c71ec7fcd1d1053f53a6fee28abc5d19ff95b1909c546a97aa183ea4c03"
+        },
+        {
+          "path": "src/domain/everyday-control.js",
+          "sha256": "9a9a522028518bd7f7753173abe1c8238525f877d32517cbee2ac8f54c30b268"
+        },
+        {
+          "path": "src/domain/everyday-method.js",
+          "sha256": "e02f3f352caef6344807e247220d050da3d0f7fd84d16a1d69dd7ca965ac5e30"
+        },
+        {
+          "path": "src/domain/everyday-public-response.js",
+          "sha256": "7f0696f47754a0b3abc548b81ebd4f95f79565127287b49111f279639dfc5b39"
+        },
+        {
+          "path": "src/domain/interpretation.js",
+          "sha256": "885ac8fca05bdd3c78457c0052eff9727d0433b055019d7c533b8b0b6fecf9e9"
+        },
+        {
+          "path": "src/domain/network-details.js",
+          "sha256": "c96cf0e29b340f5362ff92898940371348ff5500f6f00f3648a1c32bb5a1a7de"
+        },
+        {
+          "path": "src/domain/responsiveness.js",
+          "sha256": "e5c74c5d06abfb168cd423265a0edde7eeff8abc46fedd9b3872f2b898ed9af4"
+        }
+      ]
+    },
+    "helper": {
+      "package_path": "skills/internet-quality/scripts/helper.mjs",
+      "sha256": "ff0fb05994ab48d1e5826c57ea0e5fdc874030ca67c51992312b061ea1cc1e15",
+      "minimum_node_major": 24,
+      "external_npm_modules": [],
+      "builtin_imports": [
+        "node:child_process",
+        "node:crypto",
+        "node:dns",
+        "node:fs",
+        "node:fs/promises",
+        "node:https",
+        "node:net",
+        "node:os",
+        "node:path",
+        "node:perf_hooks",
+        "node:sqlite",
+        "node:url",
+        "node:util"
+      ],
+      "authored_inputs": [
+        {
+          "path": "plugin.json",
+          "sha256": "ab65e4e4435500b4b7ad05f8ee192d2b7c257ae6896527650414e1714f831ed2"
+        },
+        {
+          "path": "src/client/everyday-control.mjs",
+          "sha256": "7512fca1a8e14e135f140ceb50a079246591c8ead2718d4ab3c1f85d054071ed"
+        },
+        {
+          "path": "src/client/helper-coordination.mjs",
+          "sha256": "0e64660dd2117f031f239b829c88e219d2247f21ec3a55c28d98311ffdb65f96"
+        },
+        {
+          "path": "src/domain/everyday-continuous.js",
+          "sha256": "c8e01728be1e98672e24cea82c4e0663058f89a7e00cc9c02c2d20ddfec2ce61"
+        },
+        {
+          "path": "src/domain/everyday-control.js",
+          "sha256": "9a9a522028518bd7f7753173abe1c8238525f877d32517cbee2ac8f54c30b268"
+        },
+        {
+          "path": "src/domain/everyday-method.js",
+          "sha256": "e02f3f352caef6344807e247220d050da3d0f7fd84d16a1d69dd7ca965ac5e30"
+        },
+        {
+          "path": "src/domain/everyday-request.js",
+          "sha256": "8e5ce484a5e288a1a61a3c325ab2e358477880482727c05d48994663539d5f9a"
+        },
+        {
+          "path": "src/domain/everyday.js",
+          "sha256": "463ef52a79f37eeae51d6bb1c5214ab3eded83c840127027147afe1e2ffc0ab7"
+        },
+        {
+          "path": "src/domain/helper-background.js",
+          "sha256": "86ab0874fb1e4b0d096e439c70df420033e60c314e73e2313629a07c6f1d9bf0"
+        },
+        {
+          "path": "src/domain/helper-delivery.js",
+          "sha256": "4321da41fb96d31ae968f8c8442b7a7268b53e32224da924447537f8e4372b7b"
+        },
+        {
+          "path": "src/domain/helper-public.js",
+          "sha256": "41396539fa5b9f64d3887e69e7442ca0dd79fc99fedbe23249707f6a4dfb284e"
+        },
+        {
+          "path": "src/domain/location.js",
+          "sha256": "a4fffced2e4810d872e408de4e8db6daff69c796f181adf544c5f9bb4e03d264"
+        },
+        {
+          "path": "src/domain/network-details.js",
+          "sha256": "c96cf0e29b340f5362ff92898940371348ff5500f6f00f3648a1c32bb5a1a7de"
+        },
+        {
+          "path": "src/everyday/helper.mjs",
+          "sha256": "11be8aa69b8db8cf078ce489983c41b00534c3bdc14527f7776be11f5ead803d"
+        },
+        {
+          "path": "src/everyday/host-counters.mjs",
+          "sha256": "aaf309582591c5d3e9a1b8143d26ab65b8cadc28a28f62f8d497696669359099"
+        },
+        {
+          "path": "src/everyday/https-sampler.mjs",
+          "sha256": "aee572b41d8ccf1501e0cc64ec55d4d7b2cf1ab46e915011d1c58a0fc62c63d5"
+        },
+        {
+          "path": "src/everyday/installation.mjs",
+          "sha256": "3be3521e01090743362f92242b325393a7ffe876a1d8b78a3f566ac5d9afcb13"
+        },
+        {
+          "path": "src/everyday/installed-runtime.mjs",
+          "sha256": "e88d82ca7f9130e00efeb9e2a5ad0156b0ab9fa70adda9b8bece9405796c6909"
+        },
+        {
+          "path": "src/everyday/macos-service.mjs",
+          "sha256": "83dd022d5003deb7e1d0300e97b924ef6f44ff35ffdf24a27a643ebfbd1a84e7"
+        },
+        {
+          "path": "src/everyday/opportunity-timer.mjs",
+          "sha256": "4ca12630a83ca4d3285965f1ef9612811dc868efdf1a1ad24f797ebdb5c4b3e2"
+        },
+        {
+          "path": "src/everyday/owner.mjs",
+          "sha256": "6cc95dd705970395f54826d972ded04be10fa42b69ac05ffb2587c7ae715a485"
+        },
+        {
+          "path": "src/everyday/resolver.mjs",
+          "sha256": "9bed0dd791e73cff6a6892b5facdab35aedde5edda9f31a9b6fec68e3ccf8f8e"
+        },
+        {
+          "path": "src/everyday/store.mjs",
+          "sha256": "5ef4de10c5e0a0fc9caf48ca24956449f7e91bb2a758f65035496d090314b91f"
+        },
+        {
+          "path": "src/everyday/transport.mjs",
+          "sha256": "2204b8bb0f783d96c7446c4a18a9313fd049caa723f9a7cdeb720d80c6c60f2c"
+        }
+      ]
+    }
+  },
+  "client_version": "0.20.1",
+  "source": {
+    "revision": "c3e6339c54117eb8101268db78ba21e6702dba62",
+    "state": "clean"
+  },
+  "build": {
+    "node": "24.19.0",
+    "esbuild": "0.28.2",
+    "lockfile_sha256": "ac925defd07e6965618936dd2da24c9489b5d00afda26ba7a2a22a83f9509b29"
+  },
+  "artifacts": {
+    "client": {
+      "path": "/client.mjs",
+      "sha256": "67e5453d3197f4f61139bf33885fd5c40935ae31fc1fb3f21bedba1142458f30"
+    },
+    "helper": {
+      "path": "skills/internet-quality/scripts/helper.mjs",
+      "sha256": "ff0fb05994ab48d1e5826c57ea0e5fdc874030ca67c51992312b061ea1cc1e15"
+    },
+    "archive": {
+      "path": "/plugins/internet-quality-map-0.20.1.zip",
+      "sha256": "1846ce52a51bdaa47df90e3d4d71defa640b1309317c57da9bebf51b4d1367ca",
+      "bytes": 546603
+    }
+  },
+  "runtime": {
+    "minimum_node_major": 24,
+    "external_npm_modules": [],
+    "builtin_imports": [
+      "node:child_process",
+      "node:crypto",
+      "node:fs",
+      "node:fs/promises",
+      "node:net",
+      "node:os",
+      "node:path",
+      "node:url"
+    ],
+    "authored_inputs": [
+      {
+        "path": "packages/http-measurement/engine.js",
+        "sha256": "b7811f742f70609778b248ff7285dcffbff6c961942d8136f082edd0f6b9df3f"
+      },
+      {
+        "path": "packages/http-measurement/index.js",
+        "sha256": "3541d1257cc3fd98adc1847ca8d32d82985db11e47b2aa64760ac99094ea430c"
+      },
+      {
+        "path": "packages/http-measurement/profiles.js",
+        "sha256": "48fa7ffdea388adab8d36394dd400598e5a99711d2f0f6822d1db10eeb4cc965"
+      },
+      {
+        "path": "packages/http-measurement/summary.js",
+        "sha256": "71bc02283f69f8231516c7ad90b4486968ab8e370c0620b69dab6f3b0f99a0b8"
+      },
+      {
+        "path": "plugin.json",
+        "sha256": "ab65e4e4435500b4b7ad05f8ee192d2b7c257ae6896527650414e1714f831ed2"
+      },
+      {
+        "path": "src/client/agent.mjs",
+        "sha256": "ce7722d8d7ab2042c9d3f9459bc150a7026f57982e752d4e25e624848ec21845"
+      },
+      {
+        "path": "src/client/client-output.mjs",
+        "sha256": "160589ebfea65bf481aa01885d9a0038d21dabe706df46d2ec86b788da62fae3"
+      },
+      {
+        "path": "src/client/comparison-reader.mjs",
+        "sha256": "1dbf8ff042f0bdd06ef39d9e30aa553a305235ef3a73406f1aa8bceb125a1d8d"
+      },
+      {
+        "path": "src/client/everyday-control.mjs",
+        "sha256": "7512fca1a8e14e135f140ceb50a079246591c8ead2718d4ab3c1f85d054071ed"
+      },
+      {
+        "path": "src/client/everyday-reader.mjs",
+        "sha256": "2ac5e0f7de0668f3812021194bc4fc1ede4e5e21ced3422f130359909b46f5e4"
+      },
+      {
+        "path": "src/client/helper-coordination.mjs",
+        "sha256": "0e64660dd2117f031f239b829c88e219d2247f21ec3a55c28d98311ffdb65f96"
+      },
+      {
+        "path": "src/client/host-network.mjs",
+        "sha256": "48178c6cf8d6223e4a37d0508b87ad2434a5e8011dc8c3474af28572a156eeb2"
+      },
+      {
+        "path": "src/domain/client-context.js",
+        "sha256": "1382e2a0eb2f167a726683e8833f05b96d51fa8e5d124912dcef052b68bea4f3"
+      },
+      {
+        "path": "src/domain/comparison-response.js",
+        "sha256": "14f5fc555aa1e251fca18c98cc5c9ea475f87c058a1cf1530ddaae3a3eb51c8c"
+      },
+      {
+        "path": "src/domain/comparisons.js",
+        "sha256": "7b0d6c71ec7fcd1d1053f53a6fee28abc5d19ff95b1909c546a97aa183ea4c03"
+      },
+      {
+        "path": "src/domain/everyday-control.js",
+        "sha256": "9a9a522028518bd7f7753173abe1c8238525f877d32517cbee2ac8f54c30b268"
+      },
+      {
+        "path": "src/domain/everyday-method.js",
+        "sha256": "e02f3f352caef6344807e247220d050da3d0f7fd84d16a1d69dd7ca965ac5e30"
+      },
+      {
+        "path": "src/domain/everyday-public-response.js",
+        "sha256": "7f0696f47754a0b3abc548b81ebd4f95f79565127287b49111f279639dfc5b39"
+      },
+      {
+        "path": "src/domain/interpretation.js",
+        "sha256": "885ac8fca05bdd3c78457c0052eff9727d0433b055019d7c533b8b0b6fecf9e9"
+      },
+      {
+        "path": "src/domain/network-details.js",
+        "sha256": "c96cf0e29b340f5362ff92898940371348ff5500f6f00f3648a1c32bb5a1a7de"
+      },
+      {
+        "path": "src/domain/responsiveness.js",
+        "sha256": "e5c74c5d06abfb168cd423265a0edde7eeff8abc46fedd9b3872f2b898ed9af4"
+      }
+    ]
+  },
+  "permissions": {
+    "network": [
+      "Three temporary exclusive loopback listeners during authorized measurement on macOS/Linux; no listeners for effect-free or comparison-only commands",
+      "Authenticated bounded loopback TCP to one existing everyday helper for settled load exclusion; never starts a helper",
+      "HTTPS requests to speed.cloudflare.com for tests",
+      "DNS lookup for route observation",
+      "HTTPS requests to the selected IQM origin for publication or status checks",
+      "Opt-in credential-free comparison GETs, serial 5-second requests within 20 seconds; one 64 KiB context response and 1-3 512 KiB pages per scope",
+      "Everyday-only credential-free GETs, serial 5-second requests within 20 seconds; one optional 64 KiB context response and one immutable 512 KiB snapshot per scope; no retries or pagination"
+    ],
+    "filesystem": [
+      "Read one private everyday installation locator only when a test starts; never reads its reporting credential or SQLite state",
+      "Read OS route and host facts",
+      "Create a new private output file only when --output is supplied"
+    ],
+    "subprocess": "Fixed OS utilities without a shell, no elevation; --no-network-detection disables observation.",
+    "installation": "No install scripts, automatic updates, hooks or background services."
+  },
+  "helper_permissions": {
+    "network": [
+      "Three temporary exclusive loopback listeners for installation selection, owner startup and enabling operations",
+      "Authenticated loopback owner control",
+      "Explicit scoped private enrollment, report, permit, and revoke HTTPS operations",
+      "Separately consented public quality grant, withdrawal and exact reconciliation HTTPS operations",
+      "Permit-only small HTTPS response timing every five seconds while running"
+    ],
+    "filesystem": [
+      "Explicit private SQLite installation and retained evidence at the canonical user path",
+      "Private pinned helper and Node copies, supplied trust-v2 sidecar, bounded lifecycle journal and exact per-user LaunchAgent definition"
+    ],
+    "subprocess": [
+      "Cancelable DNS resolver",
+      "Separately consented fixed selected-interface counter readers",
+      "Bounded supplied and copied Node/helper version checks",
+      "Explicit fixed per-user launchctl bootstrap and bootout without a shell or elevation"
+    ],
+    "installation": "Explicit macOS login install, local pinned update and retained uninstall. Continuing monitoring needs separate consent. No downloads or automatic updates.",
+    "public_quality": "Explicit separate permission only; uncertain grants and withdrawal remain durable"
+  },
+  "limits": [
+    "A same-origin checksum does not authenticate the publisher independently.",
+    "This build record is generated evidence, not a signed supply-chain attestation.",
+    "A normal Node process has the permissions of its user."
+  ]
+}

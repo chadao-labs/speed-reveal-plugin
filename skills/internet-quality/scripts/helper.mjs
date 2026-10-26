@@ -5279,10 +5279,12 @@ async function applyLifecycle(command, runtime) {
   const select = async () => {
     const authority = readAuthority(path) ?? { schema: "iqm-helper-lifecycle-v1", nextL: 1, current: null, operations: [], reservations: [] };
     const previous = authority.operations.find((item) => item.id === authority.current);
-    const selected = exists2(directory) ? await resolveHelperScope2(directory, kind === "install" ? { configurationMatch: digest(JSON.stringify({ ...configuration, probe_origin: configuration.origin })) } : {}) : null;
+    const priorFor = (id2) => id2 ? authority.operations.find((item) => item.id === id2) : previous?.kind === kind && (kind === "remove" || JSON.stringify(previous.request.target) === JSON.stringify(supplied.target)) ? previous : null;
+    let prior = kind === "remove" && !requestedId ? null : priorFor(requestedId);
+    const selected = !prior && exists2(directory) ? await resolveHelperScope2(directory, kind === "install" ? { configurationMatch: digest(JSON.stringify({ ...configuration, probe_origin: configuration.origin })) } : {}) : null;
     const reservation = authority.reservations.find((item) => selected ? item.identity === selected.identity || item.identity === null && item.install === selected.helper?.enable_id : item.install === previous?.id || item.identity !== null && item.identity === previous?.identity);
     const selectedId = requestedId ?? (kind === "remove" ? reservation?.remove : null);
-    const prior = selectedId ? authority.operations.find((item) => item.id === selectedId) : previous?.kind === kind && (kind === "remove" || JSON.stringify(previous.request.target) === JSON.stringify(supplied.target)) ? previous : null;
+    prior ??= priorFor(selectedId);
     if (prior) {
       if (prior.kind !== kind || kind !== "remove" && JSON.stringify(prior.request.target) !== JSON.stringify(supplied.target) || kind === "install" && JSON.stringify(privateScope(prior.request.choices)) !== JSON.stringify(privateScope(command.choices))) throw new Error("lifecycle-request-conflict");
       return { prior };
@@ -5681,7 +5683,7 @@ import { realpathSync as realpathSync4, existsSync } from "node:fs";
 var plugin_default = {
   $schema: "https://agent-plugins.org/schemas/1.0.0/plugin.schema.json",
   name: "internet-quality-map",
-  version: "0.20.0",
+  version: "0.20.1",
   description: "Investigate slow agent connections with authorized HTTP tests, shared interpretation, one-off comparisons and everyday timing intervals.",
   homepage: "https://internet-quality-map.nf-93f.workers.dev/",
   keywords: [
