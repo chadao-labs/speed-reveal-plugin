@@ -1,7 +1,7 @@
 {
   "$schema": "https://agent-plugins.org/schemas/1.0.0/plugin.schema.json",
   "name": "internet-quality-map",
-  "version": "0.20.0",
+  "version": "0.20.1",
   "description": "Investigate slow agent connections with authorized HTTP tests, shared interpretation, one-off comparisons and everyday timing intervals.",
   "homepage": "https://internet-quality-map.nf-93f.workers.dev/",
   "keywords": [
