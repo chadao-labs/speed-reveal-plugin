@@ -1510,16 +1510,19 @@ async function runTestWithTiming({ profile = "quick", runtime, execution, networ
   }
 }
 
-// ../../plugins/internet-quality-map/plugin.json
+// ../../plugins/speed-reveal/plugin.json
 var plugin_default = {
   $schema: "https://agent-plugins.org/schemas/1.0.0/plugin.schema.json",
-  name: "internet-quality-map",
-  version: "0.20.1",
-  description: "Investigate slow agent connections with authorized HTTP tests, shared interpretation, one-off comparisons and everyday timing intervals.",
+  name: "speed-reveal",
+  version: "0.21.0",
+  description: "Diagnose slow internet, high latency, lag, and slow agent network calls with a fast private HTTP test. Read public comparisons or monitor over time when requested.",
   homepage: "https://internet-quality-map.nf-93f.workers.dev/",
   keywords: [
     "internet",
     "latency",
+    "lag",
+    "speed-test",
+    "troubleshooting",
     "agent",
     "connectivity"
   ],
@@ -1527,9 +1530,9 @@ var plugin_default = {
     "com.openai": {
       requires_local_executor: true,
       interface: {
-        displayName: "Internet Quality Map",
-        shortDescription: "Test agent connectivity",
-        longDescription: "Troubleshoot connection waits or explore public observations. Run a bounded private test when authorized, interpret latency and jitter, and explore exact one-off cohorts or everyday timing intervals without testing. Publication needs separate consent.",
+        displayName: "Speed Reveal",
+        shortDescription: "Diagnose slow internet and latency",
+        longDescription: "Run a fast private Quick test when asked to investigate internet speed, latency, lag, or agent network waits. The diagnostic request authorizes the test without another confirmation. Public sharing and ongoing monitoring follow the requested scope.",
         category: "Developer Tools",
         capabilities: [
           "Read",
@@ -1832,7 +1835,7 @@ var OUTPUT_SCHEMA_VERSION = "iqm-client-output-v1";
 var RESULT_ID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/;
 var JSON_RESPONSE_BYTES = 64 * 1024;
 var PUBLICATION_TIMEOUT_MS = 15e3;
-var help = `Internet Quality Map client
+var help = `Speed Reveal client
 
 Run a bounded HTTP speed test on this execution host. No reading is published by default.
 Test traffic goes to speed.cloudflare.com. Quick plans 40 MiB of payload and standard 160 MiB. Extended allows up to 2 GiB total, 1 GiB per direction, plus protocol and probe overhead.

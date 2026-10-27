@@ -9,8 +9,9 @@ import { fileURLToPath } from 'node:url';
 
 const root = fileURLToPath(new URL('../', import.meta.url));
 for (const packageRoot of [root, ...(process.env.IQM_TEST_PACKAGE_DIRECTORY ? [process.env.IQM_TEST_PACKAGE_DIRECTORY] : [])]) {
-  const version = JSON.parse(await readFile(join(packageRoot, 'plugin.json'))).version;
-  const base = 'internet-quality-map-' + version;
+  const manifest = JSON.parse(await readFile(join(packageRoot, 'plugin.json')));
+  const version = manifest.version;
+  const base = manifest.name + '-' + version;
   const metadata = JSON.parse(await readFile(join(packageRoot, 'releases', version, 'release.json')));
   async function fixture(operation) {
     const temporary = await mkdtemp(join(tmpdir(), 'iqm-release-check-'));
@@ -44,8 +45,12 @@ for (const packageRoot of [root, ...(process.env.IQM_TEST_PACKAGE_DIRECTORY ? [p
     });
   });
   test(version + ' changed package bytes, unreviewed provenance and forged length fail before artifact writes', async () => {
-    for (const mutation of ['package', 'source', 'length']) await fixture(async ({ source, output, build }) => {
-      if (mutation === 'package') await writeFile(join(source, 'README.md'), 'tampered');
+    for (const mutation of ['package', 'source', 'length', 'name']) await fixture(async ({ source, output, build }) => {
+      if (mutation === 'name') {
+        const manifestPath = join(source, 'plugin.json');
+        const value = JSON.parse(await readFile(manifestPath)); value.name = 'unknown-package';
+        await writeFile(manifestPath, JSON.stringify(value));
+      } else if (mutation === 'package') await writeFile(join(source, 'README.md'), 'tampered');
       else {
         const trustPath = join(source, 'releases', version, base + '.trust.json');
         const record = JSON.parse(await readFile(trustPath));

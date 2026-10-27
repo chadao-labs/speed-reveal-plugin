@@ -1,60 +1,142 @@
-# Internet Quality Map plugin
+# Speed Reveal command reference
 
-Read community reports and measure the connection used by an agent's execution host. The bundled skill explains baseline and loaded HTTP latency without claiming to predict coding speed.
+The plugin identifier is `speed-reveal`. The generic `internet-quality` skill and its script paths remain stable. Existing private state keeps its original directory so an upgrade discovers the same installation.
 
-This skills-only Agent Plugin has no MCP server, hooks, startup test, credentials, or account requirement. It needs Node.js 24 or later for its bundled client and optional foreground helper. Reading the map does not run a test. A test stays private unless the user authorizes publication.
+The [agent skill](skills/internet-quality/SKILL.md) starts a fast private HTTP test for slow internet, latency, lag, and network troubleshooting requests. Quick is the default and uses at most 40 MiB of payload plus probes and protocol overhead. An investigation request authorizes that test; no additional permission question or package audit is needed.
 
-The `internet-quality` skill contains usage and consent instructions. Its `scripts/client.mjs` is a standalone build of the same reviewed client used by the website. Inspect it before execution. `SHA256SUMS` records every distributed file except the checksum file itself.
+The package contains independent `client.mjs` and `helper.mjs` executables under `skills/internet-quality/scripts/`. Both need Node.js 24+. Commands below run from `skills/internet-quality/`; use absolute executable paths from another directory. The client measures the computer where it executes. Use `this-device` only on the user's device and `agent-host` on a remote agent computer.
 
-The client measures the host where it runs. Grok Bot normally runs on a cloud computer. That result does not describe the user's home or phone. Codex marks this plugin as requiring a local executor. Keep execution provenance truthful on every platform.
+Read this reference only for the selected operation. The plugin has no MCP server, hooks, credentials, or automatic startup. Checksums and trust records support publisher release maintenance; ordinary diagnosis runs the installed client directly. Package availability does not establish a marketplace listing or live service availability.
 
-Release 0.2.0 adds `--version`, versioned local output, shared quality fields, and `--output PATH` for a new private artifact. It saves the completed observation before publishing. An interrupted `pending` publication might already be public. Read the skill for state and exit-code handling. Publication can add up to three 15-second requests beyond the 30-second timed test and OS observation.
+## Larger tests and recovery
 
-Public service and method documentation are at https://internet-quality-map.nf-93f.workers.dev/.
+| Profile | Baseline / download / upload windows | Maximum payload |
+| --- | --- | --- |
+| `quick` | 2 / 5 / 5 seconds | 32 MiB down + 8 MiB up |
+| `standard` | 3 / 8 / 8 seconds | 128 MiB down + 32 MiB up |
+| `extended-v1` | 3 / 8 / 8 seconds | 1 GiB down + 1 GiB up |
 
-This archive is a distribution artifact. It is not proof of installation, marketplace acceptance, identity verification, or in-app testing. No repository-wide license has been assigned.
+All profiles have a 30-second measurement deadline. Probes and protocol overhead are additional. A byte cap can end a transfer early. Host observation and helper coordination can add 13.3 seconds; startup, scheduling, and file work are outside these bounds. Publication can add three requests of up to 15 seconds each.
 
-Release 0.3.0 adds `--plan` for an offline permission and traffic inventory and `--check-publication UUID` for a read-only status check. Reconciliation does not run another measurement or change a result file. The website links a versioned build and permission record alongside each release. See the skill and public trust page before execution.
+Use Standard or Extended only when the request covers that larger allowance. Do not silently escalate after a short, capped, or failed Quick result. Extended requires this mechanical acknowledgement:
 
-Release 0.3.1 also bounds probe and upload reply bodies to 64 KiB. An oversized reply stops the measurement with an error. It is not reported as a finding about the connection.
+```sh
+node scripts/client.mjs --profile extended-v1 --ack-payload-bytes 2147483648 --execution agent-host --output READING
+```
 
-Client 0.4.0 adds the optional Extended profile, up to 2 GiB payload total, with an exact `--ack-payload-bytes 2147483648` execution requirement. Quick remains the default. Explicit authorization for that larger allowance is separate from publication consent. The shared interpretation v2 requires positive directional transfer evidence and consistent sampling before reporting no coverage limits. Historical absent evidence remains unknown. See the skill for offline plans and safe recovery.
+`READING` must be a new private filename. Existing files and symlinks are refused. `--plan` is available when exact effects or command compatibility need inspection; it performs no DNS, OS commands, requests, or writes. It is optional for ordinary tests. Any supplied payload acknowledgement must exactly match the selected profile, even in a plan.
 
-Client 0.7.0 is the approved release for immediate results, optional location and on-demand map loading, retaining sourced client context. It retains the measurement and output contracts while building from the independent public application and shared HTTP library. Client 0.18.0 is a draft with shared interpretation v3 and bounded headless comparisons. It adds descriptive jitter text and ordered actions, while retaining the first action in the legacy field. Browser and CLI use the same diagnosis. Public release approval remains separate from this draft package.
+The completed result has `schema_version: iqm-client-output-v1`, `client_version`, `metrics`, `quality`, `load_evidence`, and shared `interpretation`. Follow all applicable interpretation actions. Directional download bytes are consumed payload; upload bytes are credited successful requests, not total attempted traffic. Read bytes, elapsed time, termination, failures, and sample counts together. Limited coverage cannot establish sustained capacity or a reassuring latency verdict. Editorial interpretation cues are not validated productivity thresholds.
 
-Draft 0.9.0 adds `--compare nearby,country,world` after an authorized private test and `--comparisons-only SCOPES` without testing, OS observation or publication. Use `--plan` to inspect exact filters and request bounds offline. Request-IP search hints need separate `--lookup-area ip` authorization. Explicit geography and known host placement require their sources. Historical unknown-placement rows remain descriptive evidence, not matched peers.
+Exit 0 means an observation completed. Exit 1 means a CLI, runtime, execution, or storage error. Exit 2 means publication failed or remains uncertain. On a signal or timeout, inspect the saved artifact before deciding what happened. Preserve it and report the error. Do not run a replacement test automatically.
 
-The comparison reader preserves empty, stale, sparse and interrupted evidence. It separates whole-filter totals from loaded pages and saves pending intent with the completed private artifact before reading. Optional comparison failures do not change a completed test's exit status. Lookup-only exits 0 for any validated snapshot and 3 for none. These draft flags are unavailable in approved 0.7.0 until a separate reviewed release. Reading the package starts no helper or continuous collection.
+On macOS/Linux the client coordinates with an existing helper through temporary loopback listeners and authenticated exclusion. It never creates or starts a helper. Unreachable existing helper state blocks load. A completed test leaves excluded collection paused until a requested resume. Report this state alongside the reading. Do not bypass the block by selecting another directory. Windows supports one-off tests but not this helper.
 
-Draft 0.10.0 adds settled exclusion of one existing everyday helper before generated load. The default private installation is `~/.internet-quality-map/everyday-v1`; `--everyday-directory PATH` selects another. An unavailable existing owner blocks load. Discovery never creates an installation or starts a helper. The connector holds exclusion through the network recheck, saves completed evidence before finish, and reports helper recovery separately. Collection stays disabled after the test until explicit resume. Draft 0.18.0 keeps the client graph separate from the helper owner and its SQLite reporting state.
+## Optional host context
 
-Draft 0.18.0 includes `scripts/helper.mjs` as an independent executable in the eight-file archive. Explicit quality consent enables private foreground HTTPS observation on macOS or Linux. Optional selected-interface traffic counters need separate consent. `plan` and `status` collect nothing and write nothing. Foreground SIGINT and SIGTERM settle the owner and leave it paused. Source enrollment, reporting and probe gates default closed. This draft adds explicit macOS background installation with separate continuing consent. It is not a production release or an installed-host qualification.
+Automatic context includes operating system, architecture, and Node version. Automatic route observation may return unknown. Do not infer connection technology from an ASN, VPN exit, virtual interface, speed, hardware model, or browser effectiveType. A Wi-Fi link does not establish the router's upstream service.
 
-The helper keeps immutable consent and operation receipts, uses finite probe-only permits, and never bundles an operator secret. The canonical directory is `~/.internet-quality-map/everyday-v1`. Retained replacement requires released ownership and preserves pending remote authority; retained revocation is explicit. Each installation keeps 64 lifetime local operation IDs and fails new enabling actions closed at capacity. Stop and revocation remain available. See the skill for status, controls, report reconciliation and limits.
+Supply only known facts with their sources. For example, `--device-type computer --device-type-source system` describes an observed local computer; `--internet-service 4g-lte --internet-service-source user` records the user's statement. Device link, Wi-Fi standard, and band have matching `--FIELD-source user|system` options. Explicit `--network-type`, including unknown, suppresses automatic link/radio detection. `--no-network-detection` disables automatic network and client context. No SSID, BSSID, IP, MAC address, hostname, raw user-agent, or arbitrary note belongs in report metadata.
 
-Authorized one-off measurements and helper startup use a fixed per-user quorum of three temporary loopback listeners on macOS/Linux. No coordination file is written. Help, plans and comparison-only commands never bind it. The client retains settled authenticated exclusion of a running helper through artifact completion. Windows one-off behavior is preserved; the A1 helper rejects unsupported hosts. Explicit macOS install pins supplied helper and Node bytes. Clean login and restart can continue current opted-in monitoring. Update finishes paused, and uninstall retains complete evidence and recovery runtime. Public everyday reuse requires separate explicit permission. The trust-v2 record binds both executable graphs and hashes; frozen approved 0.7.0 trust-v1 records remain unchanged.
+## Public sharing
+
+Share only when the user requests public contribution. Explain the included measurements, coarse client/network context, ASN hint, UTC day, and selected area. An existing request covering those effects is sufficient; do not ask for the same authorization again. A private diagnostic request does not select sharing.
+
+Select sharing before running the requested test:
+
+```sh
+node scripts/client.mjs --profile quick --execution agent-host --output READING --publish --location ip
+```
+
+Use `--location none` for publication without a map point. IP location may describe a VPN or hosting exit. This command runs a new test; it does not upload a saved private result. Do not run a second test merely to share an earlier result.
+
+The client saves the completed observation before publication. `publication.status` can be `private`, `pending`, `failed`, `unknown`, or `confirmed`. Pending and unknown may already be public. Keep publishing tokens private. For an interrupted contribution, take its ID from the artifact:
+
+```sh
+node scripts/client.mjs --check-publication UUID
+```
+
+This makes one bounded read without measurement or output writes. `confirmed` establishes the matching ID was returned; `not_found` means absent at check time; `unknown` means unresolved. Do not create another contribution to settle an uncertain one.
+
+## Public comparisons
+
+An existing-observations request uses comparison-only mode. It starts no test or helper. Replace `AT` with the requested country:
+
+```sh
+node scripts/client.mjs --comparisons-only country,world --comparison-country AT --comparison-area-source user
+```
+
+When a request includes both a new measurement and public comparison, add `--compare world` to the test command. For nearby evidence use sourced `--comparison-cell-lat` and `--comparison-cell-lon` together. Use `--lookup-area ip` only when the user requests approximate IP-area lookup. Search geography is independent of measured or published location. A returned ASN never automatically selects a cohort.
+
+Defaults select Quick, Node, agent-host, unknown placement, session attribution, and IP location source. A test comparison uses its actual execution. Known placement needs `--host-placement local|cloud --host-placement-source user|system`; lookup-only has separate `--comparison-runtime`, `--comparison-execution`, and `--comparison-placement` selectors. Use `--plan` when selecting nondefault filters. Do not broaden an empty cohort silently or treat historical unknown-placement records as matched peers.
+
+Reads are credential-free, serial, redirect-free, and bounded to 20 seconds total and five seconds per request. A context response is at most 64 KiB, with one 512 KiB page per scope by default. `--comparison-pages 2|3` explicitly increases pagination. At maximum scope and pagination, the consumed-body ceiling is 4,784,128 bytes, excluding overhead and in-flight bytes.
+
+Retain each scope's filters, selector sources, snapshot, freshness, counts, metric eligibility, and completion. Empty, stale, sparse, bounded, interrupted, and unavailable differ. Whole-filter populations are not loaded rows. There is no personal percentile, global-average estimate, or causal provider verdict. Optional failed comparisons preserve a completed private test and its exit status. Lookup-only exits 0 if any snapshot validates, including empty or stale evidence, and 3 if none does. Inspect every scope.
 
 ## Read everyday observations
 
-Draft 0.15.0 adds an independent `--everyday-only nearby,country,world` command. This read-only command starts no measurement, OS observation, helper, publication, or output file. All public everyday gates remain closed in production. No ready snapshot means unavailable evidence.
+For existing daily aggregate evidence, select placement and sourced geography:
 
 ```sh
-node scripts/client.mjs --plan --everyday-only country,world --everyday-placement local --everyday-country DE --everyday-area-source user
 node scripts/client.mjs --everyday-only country,world --everyday-placement local --everyday-country DE --everyday-area-source user
 ```
 
-Use `--everyday-placement local|cloud|unknown` explicitly. Country accepts an exact uppercase code. Nearby requires both `--everyday-cell-lat` and `--everyday-cell-lon`. Explicit geography requires `--everyday-area-source user|system`. Geography must come from the user or an independent observed source, not the last test's measured route. Separately authorize `--lookup-area ip` to obtain missing search geography from the lookup request. Its ASN never selects a cohort. `--everyday-asn N` selects an exact positive ASN.
+Placement is `local`, `cloud`, or `unknown`. Nearby requires both `--everyday-cell-lat` and `--everyday-cell-lon`. Request-IP search uses `--lookup-area ip` only within the requested scope. `--everyday-asn N` selects an explicit positive ASN. This mode rejects test, publication, helper, output, and pagination options. It starts no monitoring.
 
-The command rejects one-off, helper, publication, output and pagination flags. `--plan` has no network, file, or OS effects. Reads are serial, with a 20-second overall deadline and five seconds per request. There is at most one 64 KiB context response and one 512 KiB response per scope, without retries, pagination, credentials, redirects, or broadened selectors. The first validated snapshot pins subsequent scopes.
+Reads have a 20-second total deadline, one optional 64 KiB context response, and one 512 KiB response per scope. The first validated snapshot pins later scopes. Unavailable service or missing snapshots remain unavailable evidence. Do not run a test as a fallback for an existing-observations request.
 
-Read each scope's `geography`, `selection`, `availability`, `failure`, and `observation`. A null snapshot means no validated evidence. A valid empty snapshot differs from a failed read. Exit 0 means at least one validated non-null snapshot, including an empty snapshot. Exit 3 means none. Exit 1 reports CLI or execution errors. Partial success requires inspecting every scope.
+Metrics are outward intervals or null. Divide both microsecond bounds by 1000 for milliseconds. They describe installation-balanced medians of daily successful-request summaries, not pooled request percentiles. Preserve method, path, period, freshness, policy, and snapshot provenance. Never pool overlapping scopes, invent contributor counts, or infer regional failure rates. Exit 0 means at least one non-null validated snapshot; exit 3 means none.
 
-All seven metrics remain outward intervals or null. Divide both microsecond bounds by 1000 to display milliseconds. Preserve true zero. Each interval describes an installation-balanced median of daily successful-request summaries, not a pooled request percentile. Retain method, path, period, freshness, policy, and snapshot provenance. Never pool overlapping scopes, invent contributor counts, infer regional failure or traffic, rank the user, or issue a causal provider verdict. A failed read never runs a test.
+## Ongoing monitoring
 
-Draft 0.15.0 adds separately consented public quality commands to the helper. Pending grant or withdrawal remains explicit across restart. Withdrawal settles an admitted send and blocks fresh private delivery until acknowledgment. Existing private consent, interface traffic selection and background continuation remain separate.
+Use the helper when the user asks to monitor or observe the connection over time. A one-off diagnostic request does not start it. Explain that the helper sends small HTTPS probes from this computer and uploads private daily quality summaries. Honor an existing request without asking for duplicate permission.
 
-Draft 0.16.0 bounds copied runtime admission to 64 direct entries in the private runtime directory. Rejected and interrupted targets consume slots. At 64 entries, an existing target can complete or be reused. Above 64 inherited entries, only complete verified reuse is allowed. Unknown and conflicting bytes remain preserved. This finite allowance can block a new valid target after rejected inputs exhaust it. It is not a total disk bound or a supported-host qualification.
+Use the requested duration, from 1 through 35 whole days. If the user asks for ongoing monitoring without a duration, use seven days and state that choice. The saved deadline includes setup delay; expiry stops requests and counters and retains the unfinished day. Do not silently renew or substitute a shorter duration for a requested duration above the supported limit.
 
-Draft 0.17.0 bounds interrupted lifecycle publication to one `.publication` scratch sibling per destination. Validated private scratch is disposable and can be replaced. Canonical authority, journals and service definitions remain committed evidence. Unsafe objects and historical random siblings remain intact. Canonical pending OS effects remain uncertain even if scratch contains an uncommitted success. This prospective staging bound does not establish total disk fitness.
+Read `status` first to identify an existing installation. Plans are useful for lifecycle operations, not a prerequisite for one-off tests:
 
-Draft 0.18.0 adds a disclosure to existing public helper plans and short agent permission prompts. Plans describe public fields, prospective receipt dates, expiry 90 days after promotion and withdrawal limits. Status and plan are separate observations, not an atomic identity-bound preview. Recheck changed state before executing. Matching publisher hashes and code inspection do not guarantee safety.
+```sh
+node scripts/helper.mjs status
+node scripts/helper.mjs enable --background none --duration-days 7 --quality-consent private-everyday-quality-context-v1
+```
+
+The foreground command must remain running. SIGINT or SIGTERM leaves collection paused. Service availability and finite reporting authority can block enablement; report the actual result. Never claim monitoring is active from an old successful receipt alone.
+
+Include interface counters only when requested, with `--traffic-consent private-everyday-interface-traffic-v1 --interface NAME`. If the requested interface is ambiguous, ask which interface rather than selecting one silently. Known placement uses `--placement local|cloud --placement-source user|system`. Leave it unknown otherwise.
+
+For requested macOS login continuation, use `helper.mjs plan install`, then `install` with `--background-consent continue-at-login-and-restart-v1`, the duration and quality choices, absolute `--helper` and `--node` paths, their `--helper-sha256` and `--node-sha256` values, the matching `--trust` sidecar, and `--release-version`. These are required installer inputs, not a routine package-audit task. The installer pins local runtime copies. Linux supports foreground operation. A request for foreground observation does not select login startup.
+
+Adoption requires the same original duration, traffic, and placement scope. It preserves identity and receipts. `update` replaces an explicitly selected installed runtime and leaves it paused; requested `resume --background login` restores continuation. `uninstall` retains private evidence and recovery files. Do not delete state to resolve a conflict or retry an uncertain enabling operation with a new identity.
+
+Use these controls within the user's requested scope:
+
+```sh
+node scripts/helper.mjs history
+node scripts/helper.mjs inspect-day --day YYYY-MM-DD
+node scripts/helper.mjs pause
+node scripts/helper.mjs resume
+node scripts/helper.mjs traffic pause
+node scripts/helper.mjs traffic resume
+node scripts/helper.mjs stop
+node scripts/helper.mjs revoke
+```
+
+Pause, Stop, revocation, exclusion, and recovery suspend continuation. A plain resume does not restore a suspended login grant. Resume only when requested. Preserve uncertain operation IDs and use the matching recovery path. `recover` leaves collection paused. `retry-report --day YYYY-MM-DD` retries retained bytes, not a new measurement. `retry-revoke` retries a pending disabling intent.
+
+State lives in `~/.internet-quality-map/everyday-v1`. Retained replacement requires `--retain-existing` and a released prior owner; it preserves the old authority. `revoke --retained INSTALLATION_ID` reconciles that retained authority. Capacity errors, conflicting state, and unknown service effects are blockers to report, not reasons to erase evidence. Status distinguishes desired monitoring, actual activity, private authority, and service registration.
+
+## Public everyday sharing
+
+An explicit request to share future helper quality summaries selects this separate scope. Private monitoring or login installation alone does not. Explain that sharing includes small HTTPS timings, coarse network/area context, and periods, but excludes interface traffic. It starts the next server UTC day and ends within existing reporting authority. Snapshots expire 90 days after promotion; withdrawal cannot recall downloaded copies.
+
+Read `status` and `plan public allow` for the intended installation. Recheck status before executing if its identity or choices may have changed. Use one fresh 32-character lowercase hexadecimal operation ID:
+
+```sh
+node scripts/helper.mjs public allow --public-consent public-everyday-quality-v3-1 --operation-id OPERATION_ID
+node scripts/helper.mjs status
+```
+
+Report the receipt's actual `first_day` and exclusive `end_day`. Granted does not prove aggregate publication. PendingGrant may already be authorized remotely. Preserve its operation ID. `public reconcile` replays the recorded request and changes state; use it only for requested recovery, not read-only inspection. Never replace an uncertain grant with a fresh allow.
+
+For requested withdrawal, inspect `plan public withdraw` and run `public withdraw`. Pending withdrawal blocks new private reports and permit sends until acknowledgment. Stop does not withdraw an acknowledged public grant; private revoke withdraws it on acknowledgment. Public commands preserve private observation choices but can start an owner performing previously authorized work. They do not enable login startup.

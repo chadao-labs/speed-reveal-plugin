@@ -1,0 +1,11 @@
+{
+  "name": "speed-reveal",
+  "version": "0.21.0",
+  "filename": "speed-reveal-0.21.0.zip",
+  "sha256": "04edc6481c9853e75a9775c0e2b06325f64764529ef24aca17edf0ff5852594e",
+  "bytes": 518595,
+  "files": 8,
+  "client_sha256": "879a15ad71ee4b573c93c2283ad45f0716ead3aae93ca5cf1e28be775c7390af",
+  "helper_sha256": "3a71d914db1cec64f2b12529bb02177c2b4395366163903d4610fe8926d7441f",
+  "trust_filename": "speed-reveal-0.21.0.trust.json"
+}

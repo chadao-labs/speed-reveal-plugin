@@ -30,8 +30,8 @@ function runtime(record, bytes, name) {
 export async function readPackage(root) {
   const manifest = JSON.parse(await readFile(resolve(root, 'plugin.json'), 'utf8'));
   assert.match(manifest.version, /^\d+\.\d+\.\d+$/);
-  assert.equal(manifest.name, 'internet-quality-map');
-  const base = 'internet-quality-map-' + manifest.version;
+  assert.ok(['internet-quality-map', 'speed-reveal'].includes(manifest.name), 'Unknown package identity');
+  const base = manifest.name + '-' + manifest.version;
   const recordRoot = resolve(root, 'releases', manifest.version);
   const metadataBytes = await readFile(resolve(recordRoot, 'release.json'));
   const trustBytes = await readFile(resolve(recordRoot, base + '.trust.json'));
@@ -56,6 +56,7 @@ export async function readPackage(root) {
   const ordered = [...entries].sort(([a], [b]) => a.localeCompare(b, 'en'));
   assert.equal(entries.get('SHA256SUMS').toString(), ordered.filter(([name]) => name !== 'SHA256SUMS').map(([name, bytes]) => sha256(bytes) + '  ' + name + '\n').join(''), 'Package checksums differ');
   assert.equal(metadata.version, manifest.version);
+  assert.equal(metadata.name, manifest.name);
   assert.equal(metadata.files, entries.size);
   assert.equal(metadata.filename, base + '.zip');
   assert.equal(metadata.trust_filename, base + '.trust.json');
