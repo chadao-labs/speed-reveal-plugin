@@ -5679,16 +5679,19 @@ init_helper_public();
 import { fileURLToPath } from "node:url";
 import { realpathSync as realpathSync4, existsSync } from "node:fs";
 
-// ../../plugins/internet-quality-map/plugin.json
+// ../../plugins/speed-reveal/plugin.json
 var plugin_default = {
   $schema: "https://agent-plugins.org/schemas/1.0.0/plugin.schema.json",
-  name: "internet-quality-map",
-  version: "0.20.1",
-  description: "Investigate slow agent connections with authorized HTTP tests, shared interpretation, one-off comparisons and everyday timing intervals.",
+  name: "speed-reveal",
+  version: "0.21.0",
+  description: "Diagnose slow internet, high latency, lag, and slow agent network calls with a fast private HTTP test. Read public comparisons or monitor over time when requested.",
   homepage: "https://internet-quality-map.nf-93f.workers.dev/",
   keywords: [
     "internet",
     "latency",
+    "lag",
+    "speed-test",
+    "troubleshooting",
     "agent",
     "connectivity"
   ],
@@ -5696,9 +5699,9 @@ var plugin_default = {
     "com.openai": {
       requires_local_executor: true,
       interface: {
-        displayName: "Internet Quality Map",
-        shortDescription: "Test agent connectivity",
-        longDescription: "Troubleshoot connection waits or explore public observations. Run a bounded private test when authorized, interpret latency and jitter, and explore exact one-off cohorts or everyday timing intervals without testing. Publication needs separate consent.",
+        displayName: "Speed Reveal",
+        shortDescription: "Diagnose slow internet and latency",
+        longDescription: "Run a fast private Quick test when asked to investigate internet speed, latency, lag, or agent network waits. The diagnostic request authorizes the test without another confirmation. Public sharing and ongoing monitoring follow the requested scope.",
         category: "Developer Tools",
         capabilities: [
           "Read",
@@ -5716,7 +5719,7 @@ var plugin_default = {
 // src/everyday/helper.mjs
 init_helper_background();
 init_helper_delivery();
-var help = `Internet Quality Map private helper. Node.js 24+.
+var help = `Speed Reveal private helper. Node.js 24+.
 plan [enable|install|update|uninstall|pause|resume|stop|revoke|recover|retry-report|retry-revoke|traffic-pause|traffic-resume]
 enable --background none --quality-consent private-everyday-quality-context-v1
 status | history | inspect-day --day YYYY-MM-DD

@@ -36,3 +36,5 @@ The candidate must carry clean source provenance. The tests copy the workflow
 scripts into isolated fixtures and run both the guarded verifier and reproducer.
 Never change an existing version's assets or tag to accommodate changed bytes. Passing these
 checks does not approve a release, create a tag, or publish any assets.
+
+Speed Reveal releases use the `speed-reveal` package name and filename stem. Historical `internet-quality-map` packages retain their original names and records. The verifier accepts only those two identities and requires matching manifest and release metadata names.

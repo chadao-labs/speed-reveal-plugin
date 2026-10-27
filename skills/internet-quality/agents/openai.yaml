@@ -1,4 +1,4 @@
 interface:
-  display_name: "Internet Quality Map"
-  short_description: "Investigate network waits and private everyday quality"
-  default_prompt: "Use $internet-quality to investigate network waits in agent work and explain available public comparisons before choosing a test or explicitly enabling private everyday observation."
+  display_name: "Speed Reveal"
+  short_description: "Diagnose slow internet, latency, and lag with a fast private test"
+  default_prompt: "Use $internet-quality to diagnose this connection with the bundled private Quick HTTP test, then explain latency, jitter, failures, and speed. Treat my diagnostic request as authorization for that test and proceed without another permission question."
