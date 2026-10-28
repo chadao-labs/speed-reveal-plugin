@@ -25,6 +25,8 @@ checks on Linux, macOS and Windows, then uploads the verified files to a draft
 GitHub release and publishes it only after all uploads succeed. Existing releases
 are never overwritten. A failed upload can leave a draft for operator recovery.
 
+This public repository intentionally uses GitHub-hosted runners: `ubuntu-latest`, `macos-latest`, and `windows-latest` for verification, and `ubuntu-latest` for publication. Keep these workflows on GitHub-hosted runners; the organization's shared Contabo pool is used by private repositories. The publication destination follows `github.repository`, including after a repository transfer.
+
 Publication of these artifacts is separate from marketplace acceptance and from
 the infrastructure repository's release-catalog promotion and Worker deployment.
 
